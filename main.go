@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 
 	containerd "github.com/containerd/containerd/v2/client"
@@ -10,12 +11,15 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	delete := flag.Bool("delete", false, "delete the task")
+	flag.Parse()
+
+	if err := run(*delete); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run() error {
+func run(delete bool) error {
 	client, err := containerd.New("/run/containerd/containerd.sock")
 	if err != nil {
 		return err
@@ -23,6 +27,13 @@ func run() error {
 	defer client.Close()
 
 	ctx := namespaces.WithNamespace(context.Background(), "example")
+
+	if delete {
+		if err := taskutil.Delete(ctx, client); err != nil {
+			return nil
+		}
+		return nil
+	}
 
 	task, exitStatusCh, err := taskutil.RunOnce(ctx, client)
 	if err != nil {
