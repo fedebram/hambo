@@ -97,11 +97,13 @@ func Delete(ctx context.Context, client *containerd.Client) error {
 		return err
 	}
 
-	if err := stop(ctx, task); err != nil {
-		return err
-	}
-	if _, err := task.Delete(ctx); err != nil {
-		return err
+	if task != nil {
+		if err := stop(ctx, task); err != nil {
+			return err
+		}
+		if _, err := task.Delete(ctx); err != nil {
+			return err
+		}
 	}
 
 	log.Printf("%s deleting container", container.ID())
