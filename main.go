@@ -24,8 +24,16 @@ func run() error {
 
 	ctx := namespaces.WithNamespace(context.Background(), "example")
 
-	if err := taskutil.Taskworker(ctx, client); err != nil {
+	task, exitStatusCh, err := taskutil.RunOnce(ctx, client)
+	if err != nil {
 		return err
 	}
+
+	st := <-exitStatusCh
+	code, exitedAt, err := st.Result()
+	if err != nil {
+		return err
+	}
+	log.Printf("task %s: exited with code %d at %s", task.ID(), code, exitedAt)
 	return nil
 }
