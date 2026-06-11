@@ -13,20 +13,40 @@ import (
 	"github.com/containerd/errdefs"
 )
 
-func RunOnce(ctx context.Context, client *containerd.Client) (containerd.Task, <-chan containerd.ExitStatus, error) {
-	image, err := client.Pull(ctx, "docker.io/library/redis:alpine", containerd.WithPullUnpack)
-	if err != nil {
-		return nil, nil, err
-	}
+type TaskWorker struct {
+	client *containerd.Client
+	store  *TaskStore
+	name   string
+}
 
-	container, err := client.LoadContainer(ctx, "redis-server")
+type TaskRecord struct {
+	Name  string `json:"name"`
+	Image string `json:"image"`
+}
+
+func NewTaskWorker(client *containerd.Client, store *TaskStore, name string) *TaskWorker {
+	return &TaskWorker{
+		client: client,
+		store:  store,
+		name:   name,
+	}
+}
+
+func (tw *TaskWorker) RunOnce(ctx context.Context, name, image string) (containerd.Task, <-chan containerd.ExitStatus, error) {
+	container, err := tw.client.LoadContainer(ctx, name)
 	if errdefs.IsNotFound(err) {
-		container, err = client.NewContainer(
+		var crdImage containerd.Image
+		crdImage, err = tw.client.Pull(ctx, image, containerd.WithPullUnpack)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		container, err = tw.client.NewContainer(
 			ctx,
-			"redis-server",
-			containerd.WithImage(image),
-			containerd.WithNewSnapshot("redis-server-snapshot", image),
-			containerd.WithNewSpec(oci.WithImageConfig(image)),
+			name,
+			containerd.WithImage(crdImage),
+			containerd.WithNewSnapshot(name+"-snapshot", crdImage),
+			containerd.WithNewSpec(oci.WithImageConfig(crdImage)),
 		)
 	}
 	if err != nil {
@@ -82,10 +102,10 @@ func RunOnce(ctx context.Context, client *containerd.Client) (containerd.Task, <
 	return task, exitStatusCh, nil
 }
 
-func Delete(ctx context.Context, client *containerd.Client) error {
-	container, err := client.LoadContainer(ctx, "redis-server")
+func (tw *TaskWorker) Delete(ctx context.Context, name string) error {
+	container, err := tw.client.LoadContainer(ctx, name)
 	if errdefs.IsNotFound(err) {
-		log.Printf("%s container not found, nothing to delete", "redis-server")
+		log.Printf("%s container not found, nothing to delete", name)
 		return nil
 	}
 	if err != nil {
