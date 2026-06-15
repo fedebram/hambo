@@ -9,6 +9,7 @@ import (
 )
 
 const taskBucket = "tasks"
+const sequenceBucket = "seq"
 
 // TaskStore persists TaskRecords in a bbolt database and lets callers
 // subscribe to changes on a given key.
@@ -28,8 +29,13 @@ func NewTaskStore(path string) (*TaskStore, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(taskBucket))
-		return err
+		if _, err := tx.CreateBucketIfNotExists([]byte(taskBucket)); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucketIfNotExists([]byte(sequenceBucket)); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		db.Close()
@@ -109,18 +115,111 @@ func (ts *TaskStore) Get(name string) (TaskRecord, bool, error) {
 
 // Put stores rec under its Name, overwriting any existing record, and notifies
 // every subscriber watching that key.
-func (ts *TaskStore) Put(rec TaskRecord) error {
-	data, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
+//
+// Every successful write stamps the record with a global autoincrementing number
+// (sequence number) that is also returned to the caller.
+func (ts *TaskStore) Put(rec TaskRecord) (uint64, error) {
+	var seq uint64
 	if err := ts.db.Update(func(tx *bolt.Tx) error {
+		var err error
+		seq, err = tx.Bucket([]byte(sequenceBucket)).NextSequence()
+		if err != nil {
+			return err
+		}
+		rec.Seq = seq
+		data, err := json.Marshal(rec)
+		if err != nil {
+			return err
+		}
 		b := tx.Bucket([]byte(taskBucket))
 		return b.Put([]byte(rec.Name), data)
 	}); err != nil {
-		return err
+		return 0, err
+	}
+	ts.notify(rec.Name)
+	return seq, nil
+}
+
+// Update atomically reads the record under name and passes it to fn.
+// fn returns the new record to be written and if it needs to be written.
+// If fn returns true, then update writes the new record and returns the new sequence number.
+// A Successful write notifies subscribers.
+func (ts *TaskStore) Update(name string, fn func(cur TaskRecord, found bool) (TaskRecord, bool)) (uint64, error) {
+	var (
+		seq     uint64
+		written bool
+	)
+	if err := ts.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(taskBucket))
+
+		var cur TaskRecord
+		found := false
+		if v := b.Get([]byte(name)); v != nil {
+			if err := json.Unmarshal(v, &cur); err != nil {
+				return err
+			}
+			found = true
+		}
+
+		next, write := fn(cur, found)
+		if !write {
+			return nil
+		}
+
+		s, err := tx.Bucket([]byte(sequenceBucket)).NextSequence()
+		if err != nil {
+			return err
+		}
+		next.Seq = s
+		data, err := json.Marshal(next)
+		if err != nil {
+			return err
+		}
+		if err := b.Put([]byte(name), data); err != nil {
+			return err
+		}
+		seq, written = s, true
+		return nil
+	}); err != nil {
+		return 0, err
 	}
 
-	ts.notify(rec.Name)
-	return nil
+	if written {
+		ts.notify(name)
+	}
+	return seq, nil
+}
+
+// TryDelete deletes a task record by name, but only if the stored sequence number
+// still matches the seq the caller observed.
+// Returns false if the seq doesn't match.
+// Successful deletion notifies subscribers.
+//
+// If the record is already gone (already deleted by someone else), TryDelete returns true but does not notify subscribers.
+func (ts *TaskStore) TryDelete(name string, seq uint64) (bool, error) {
+	gone, removed := false, false
+	if err := ts.db.Update(func(tx *bolt.Tx) error {
+		var tr TaskRecord
+		b := tx.Bucket([]byte(taskBucket))
+		v := b.Get([]byte(name))
+		if v == nil {
+			gone = true
+			return nil
+		}
+		if err := json.Unmarshal(v, &tr); err != nil {
+			return err
+		}
+		if tr.Seq != seq {
+			return nil
+		}
+		gone, removed = true, true
+		return b.Delete([]byte(name))
+	}); err != nil {
+		return false, err
+	}
+
+	if removed {
+		ts.notify(name)
+	}
+	return gone, nil
 }

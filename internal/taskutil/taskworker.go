@@ -20,8 +20,10 @@ type TaskWorker struct {
 }
 
 type TaskRecord struct {
-	Name  string `json:"name"`
-	Image string `json:"image"`
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	Seq    uint64 `json:"seq"`
+	Delete bool   `json:"delete"`
 }
 
 func NewTaskWorker(client *containerd.Client, store *TaskStore, name string) *TaskWorker {
