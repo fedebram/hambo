@@ -89,7 +89,6 @@ func (tw *TaskWorker) RunOnce(ctx context.Context, name, image string) (containe
 	case containerd.Created:
 		log.Println("Start task")
 		err = task.Start(ctx)
-	// if the task is in pausing state, calling resume what is going to happen?
 	case containerd.Paused, containerd.Pausing:
 		log.Println("Resume task")
 		err = task.Resume(ctx)
@@ -123,13 +122,17 @@ func (tw *TaskWorker) Delete(ctx context.Context, name string) error {
 		if err := stop(ctx, task); err != nil {
 			return err
 		}
-		if _, err := task.Delete(ctx); err != nil {
+		// err check for race conditions, but in reality one task is handled at most with one task worker.
+		if _, err := task.Delete(ctx); err != nil && !errdefs.IsNotFound(err) {
 			return err
 		}
 	}
 
 	log.Printf("%s deleting container", container.ID())
-	return container.Delete(ctx, containerd.WithSnapshotCleanup)
+	if err := container.Delete(ctx, containerd.WithSnapshotCleanup); err != nil && !errdefs.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 func stop(ctx context.Context, task containerd.Task) error {
@@ -154,7 +157,9 @@ func stop(ctx context.Context, task containerd.Task) error {
 		return err
 	}
 
-	if err := task.Kill(ctx, syscall.SIGTERM); err != nil {
+	if err := task.Kill(ctx, syscall.SIGTERM); err != nil &&
+		// those errors checks are the same of containerd.WithProcessKill
+		!errdefs.IsNotFound(err) && !errdefs.IsFailedPrecondition(err) {
 		return err
 	}
 
@@ -166,9 +171,11 @@ func stop(ctx context.Context, task containerd.Task) error {
 		}
 		log.Printf("task %s: exited with code %d at %s", task.ID(), code, exitedAt)
 		return nil
+		// fixed timeout for now...
 	case <-time.After(10 * time.Second):
 		log.Println("SIGTERM timeout, sending SIGKILL")
-		if err := task.Kill(ctx, syscall.SIGKILL); err != nil {
+		if err := task.Kill(ctx, syscall.SIGKILL, containerd.WithKillAll); err != nil &&
+			!errdefs.IsNotFound(err) && !errdefs.IsFailedPrecondition(err) {
 			return err
 		}
 		st := <-exitStatusC
