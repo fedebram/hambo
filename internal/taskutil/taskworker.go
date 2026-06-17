@@ -191,3 +191,60 @@ func stop(ctx context.Context, task containerd.Task) error {
 		return nil
 	}
 }
+
+func (tw *TaskWorker) Loop(ctx context.Context) uint64 {
+	for {
+		done, seq := tw.reconcile(ctx)
+		if done {
+			return seq
+		}
+	}
+}
+
+func (tw *TaskWorker) reconcile(ctx context.Context) (done bool, seq uint64) {
+	subCh, cancelSub := tw.store.Sub(tw.name)
+	defer cancelSub()
+
+	rec, found, err := tw.store.Get(tw.name)
+	if err != nil {
+		log.Printf("loop: get %s: %v", tw.name, err)
+		time.Sleep(waitRetry)
+		return false, rec.Seq
+	}
+
+	if !found || rec.Delete {
+		if err := tw.Delete(ctx, tw.name); err != nil {
+			log.Printf("loop: delete %s: %v", tw.name, err)
+			time.Sleep(waitRetry)
+			return false, rec.Seq
+		}
+		return true, rec.Seq
+	}
+
+	_, exitStatusCh, err := tw.RunOnce(ctx, rec.Name, rec.Image, rec.Cmd)
+	if err != nil {
+		log.Printf("loop: run %s: %v", rec.Name, err)
+		time.Sleep(waitRetry)
+		return false, rec.Seq
+	}
+
+	select {
+	case <-subCh:
+		return false, rec.Seq
+	case st := <-exitStatusCh:
+		code, exitedAt, err := st.Result()
+		if err != nil {
+			log.Printf("loop: exit status %s: %v", tw.name, err)
+			time.Sleep(waitRetry)
+			return false, rec.Seq
+		}
+		log.Printf("task %s: exited with code %d at %s", tw.name, code, exitedAt)
+
+		if err := tw.Delete(ctx, tw.name); err != nil {
+			log.Printf("loop: delete %s: %v", tw.name, err)
+			time.Sleep(waitRetry)
+			return false, rec.Seq
+		}
+		return true, rec.Seq
+	}
+}

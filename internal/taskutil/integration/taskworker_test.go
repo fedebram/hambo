@@ -7,6 +7,7 @@ import (
 	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/fedebram/hambo/internal/taskutil"
 )
 
 func TestRunOnce(t *testing.T) {
@@ -255,6 +256,97 @@ func TestDelete(t *testing.T) {
 		}
 		if e.containerExists() {
 			t.Fatal("container should be gone after Delete")
+		}
+	})
+}
+
+func TestLoop(t *testing.T) {
+	// here we see how it works in practice. Loop is decoupled from who writes the task record.
+	t.Run("SimpleRun", func(t *testing.T) {
+		e := newTestEnv(t)
+
+		wantSeq, err := e.store.Put(taskutil.TaskRecord{Name: e.name, Image: testImage})
+		if err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+
+		seqCh := make(chan uint64, 1)
+		go func() { seqCh <- e.tw.Loop(e.ctx) }()
+
+		select {
+		case gotSeq := <-seqCh:
+			if gotSeq != wantSeq {
+				t.Errorf("Loop returned seq %d, want %d", gotSeq, wantSeq)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatal("Loop did not exit within 20 seconds")
+		}
+
+		if e.containerExists() {
+			t.Fatal("container should be gone after Loop exits")
+		}
+	})
+
+	// when a new write happens on the record, the loop reconciles.
+	// we can also acknowledge that loop acted on the new "version" (sequence) of the record.
+	t.Run("DeleteOnDeleteFlag", func(t *testing.T) {
+		e := newTestEnv(t)
+
+		cmd := []string{"sh", "-c", `trap "exit 0" TERM; while true; do sleep 0.2; done`}
+		var putSeq uint64
+		putSeq, err := e.store.Put(taskutil.TaskRecord{Name: e.name, Image: testImage, Cmd: cmd})
+		if err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+
+		seqCh := make(chan uint64, 1)
+		go func() { seqCh <- e.tw.Loop(e.ctx) }()
+
+		e.waitStatusByName(containerd.Running, 10*time.Second)
+
+		wantSeq, err := e.store.Update(e.name, func(cur taskutil.TaskRecord, found bool) (taskutil.TaskRecord, bool) {
+			cur.Delete = true
+			return cur, true
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+
+		select {
+		case gotSeq := <-seqCh:
+			// a bit redundant...
+			if gotSeq == putSeq {
+				t.Errorf("Loop not handled the second write")
+			}
+			if gotSeq != wantSeq {
+				t.Errorf("Loop returned seq %d, want %d", gotSeq, wantSeq)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatal("Loop did not tear down within 20s after Delete flag")
+		}
+
+		if e.containerExists() {
+			t.Fatal("container should be gone after Delete flag")
+		}
+	})
+
+	t.Run("EmptyStore", func(t *testing.T) {
+		e := newTestEnv(t)
+
+		seqCh := make(chan uint64, 1)
+		go func() { seqCh <- e.tw.Loop(e.ctx) }()
+
+		select {
+		case gotSeq := <-seqCh:
+			if gotSeq != 0 {
+				t.Errorf("Loop returned seq %d, want 0", gotSeq)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Loop did not return on an empty store")
+		}
+
+		if e.containerExists() {
+			t.Fatal("no container should have been created")
 		}
 	})
 }
