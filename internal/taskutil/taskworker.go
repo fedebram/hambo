@@ -13,6 +13,9 @@ import (
 	"github.com/containerd/errdefs"
 )
 
+// General wait before retry.
+const waitRetry = 5 * time.Second
+
 type TaskWorker struct {
 	client *containerd.Client
 	store  *TaskStore
@@ -20,10 +23,11 @@ type TaskWorker struct {
 }
 
 type TaskRecord struct {
-	Name   string `json:"name"`
-	Image  string `json:"image"`
-	Seq    uint64 `json:"seq"`
-	Delete bool   `json:"delete"`
+	Name   string   `json:"name"`
+	Image  string   `json:"image"`
+	Cmd    []string `json:"cmd,omitempty"`
+	Seq    uint64   `json:"seq"`
+	Delete bool     `json:"delete"`
 }
 
 func NewTaskWorker(client *containerd.Client, store *TaskStore, name string) *TaskWorker {
@@ -34,7 +38,7 @@ func NewTaskWorker(client *containerd.Client, store *TaskStore, name string) *Ta
 	}
 }
 
-func (tw *TaskWorker) RunOnce(ctx context.Context, name, image string) (containerd.Task, <-chan containerd.ExitStatus, error) {
+func (tw *TaskWorker) RunOnce(ctx context.Context, name, image string, cmd []string) (containerd.Task, <-chan containerd.ExitStatus, error) {
 	container, err := tw.client.LoadContainer(ctx, name)
 	if errdefs.IsNotFound(err) {
 		var crdImage containerd.Image
@@ -48,7 +52,7 @@ func (tw *TaskWorker) RunOnce(ctx context.Context, name, image string) (containe
 			name,
 			containerd.WithImage(crdImage),
 			containerd.WithNewSnapshot(name+"-snapshot", crdImage),
-			containerd.WithNewSpec(oci.WithImageConfig(crdImage)),
+			containerd.WithNewSpec(oci.WithImageConfigArgs(crdImage, cmd)),
 		)
 	}
 	if err != nil {

@@ -64,6 +64,7 @@ type testEnv struct {
 	ctx    context.Context
 	name   string
 	tw     *taskutil.TaskWorker
+	store  *taskutil.TaskStore
 	client *containerd.Client
 }
 
@@ -88,6 +89,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		ctx:    ctx,
 		name:   name,
 		tw:     taskutil.NewTaskWorker(testClient, store, name),
+		store:  store,
 		client: testClient,
 	}
 	t.Cleanup(e.forceCleanup)
@@ -106,8 +108,8 @@ func (e *testEnv) forceCleanup() {
 }
 
 // createContainer creates a new container with the provided test image.
-// args are the process args. If nothing is passed the base config of the image is used.
-func (e *testEnv) createContainer(args ...string) containerd.Container {
+// cmd replaces the CMD of the image.
+func (e *testEnv) createContainer(cmd ...string) containerd.Container {
 	e.t.Helper()
 
 	img, err := e.client.GetImage(e.ctx, testImage)
@@ -115,15 +117,10 @@ func (e *testEnv) createContainer(args ...string) containerd.Container {
 		e.t.Fatalf("GetImage: %v", err)
 	}
 
-	specOpts := []oci.SpecOpts{oci.WithImageConfig(img)}
-	if len(args) > 0 {
-		specOpts = append(specOpts, oci.WithProcessArgs(args...))
-	}
-
 	c, err := e.client.NewContainer(e.ctx, e.name,
 		containerd.WithImage(img),
 		containerd.WithNewSnapshot(e.name+"-snapshot", img),
-		containerd.WithNewSpec(specOpts...),
+		containerd.WithNewSpec(oci.WithImageConfigArgs(img, cmd)),
 	)
 	if err != nil {
 		e.t.Fatalf("NewContainer: %v", err)
@@ -178,20 +175,52 @@ func (e *testEnv) containerExists() bool {
 	return false
 }
 
-// waitStatus polls task state until the task reaches want, or fails after timeout.
-func (e *testEnv) waitStatus(task containerd.Task, want containerd.ProcessStatus, timeout time.Duration) {
+func (e *testEnv) pollStatus(want containerd.ProcessStatus, timeout time.Duration, statusFn func() (containerd.ProcessStatus, bool)) {
 	e.t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		got := e.status(task)
-		if got == want {
+		if got, ok := statusFn(); ok && got == want {
 			return
 		}
 		if time.Now().After(deadline) {
-			e.t.Fatalf("waiting for status %q: still %q after %s", want, got, timeout)
+			e.t.Fatalf("waiting for status %q after %s", want, timeout)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// waitStatus polls task state until the task reaches want, or fails after timeout.
+func (e *testEnv) waitStatus(task containerd.Task, want containerd.ProcessStatus, timeout time.Duration) {
+	e.t.Helper()
+	e.pollStatus(want, timeout, func() (containerd.ProcessStatus, bool) {
+		st, err := task.Status(e.ctx)
+		if err != nil {
+			return "", false
+		}
+		return st.Status, true
+	})
+}
+
+// waitStatusByName polls task state until the task reaches want, or fails after timeout.
+//
+// task is retrieved directly from testEnv
+func (e *testEnv) waitStatusByName(want containerd.ProcessStatus, timeout time.Duration) {
+	e.t.Helper()
+	e.pollStatus(want, timeout, func() (containerd.ProcessStatus, bool) {
+		c, err := e.client.LoadContainer(e.ctx, e.name)
+		if err != nil {
+			return "", false
+		}
+		task, err := c.Task(e.ctx, nil)
+		if err != nil {
+			return "", false
+		}
+		st, err := task.Status(e.ctx)
+		if err != nil {
+			return "", false
+		}
+		return st.Status, true
+	})
 }
 
 // waitExit blocks on the exit channel and returns the process exit code.

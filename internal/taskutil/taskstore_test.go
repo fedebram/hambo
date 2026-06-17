@@ -2,6 +2,7 @@ package taskutil
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -78,7 +79,7 @@ func TestPutGetRoundTrip(t *testing.T) {
 		t.Errorf("seq mismatch: got %d, want %d", got.Seq, seq1)
 	}
 	v1.Seq = got.Seq
-	if got != v1 {
+	if !reflect.DeepEqual(got, v1) {
 		t.Errorf("got %+v, want %+v", got, v1)
 	}
 
@@ -100,7 +101,7 @@ func TestPutGetRoundTrip(t *testing.T) {
 		t.Errorf("seq mismatch: got %d, want %d", got.Seq, seq2)
 	}
 	v2.Seq = got.Seq
-	if got != v2 {
+	if !reflect.DeepEqual(got, v2) {
 		t.Errorf("after overwrite got %+v, want %+v", got, v2)
 	}
 }

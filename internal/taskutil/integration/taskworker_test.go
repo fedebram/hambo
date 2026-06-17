@@ -14,7 +14,7 @@ func TestRunOnce(t *testing.T) {
 	t.Run("JustCreate", func(t *testing.T) {
 		e := newTestEnv(t)
 
-		task, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage)
+		task, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage, nil)
 		if err != nil {
 			t.Fatalf("RunOnce: %v", err)
 		}
@@ -37,7 +37,7 @@ func TestRunOnce(t *testing.T) {
 		e := newTestEnv(t)
 		e.createContainer()
 
-		task, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage)
+		task, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage, nil)
 		if err != nil {
 			t.Fatalf("RunOnce: %v", err)
 		}
@@ -55,7 +55,7 @@ func TestRunOnce(t *testing.T) {
 		created := e.newTask(e.createContainer())
 		e.waitStatus(created, containerd.Created, 5*time.Second)
 
-		_, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage)
+		_, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage, nil)
 		if err != nil {
 			t.Fatalf("RunOnce: %v", err)
 		}
@@ -70,7 +70,7 @@ func TestRunOnce(t *testing.T) {
 		running := e.runningTask("sleep", "3600")
 		e.waitStatus(running, containerd.Running, 5*time.Second)
 
-		ret, _, err := e.tw.RunOnce(e.ctx, e.name, testImage)
+		ret, _, err := e.tw.RunOnce(e.ctx, e.name, testImage, nil)
 		if err != nil {
 			t.Fatalf("RunOnce: %v", err)
 		}
@@ -92,7 +92,7 @@ func TestRunOnce(t *testing.T) {
 		}
 		e.waitStatus(task, containerd.Paused, 5*time.Second)
 
-		ret, _, err := e.tw.RunOnce(e.ctx, e.name, testImage)
+		ret, _, err := e.tw.RunOnce(e.ctx, e.name, testImage, nil)
 		if err != nil {
 			t.Fatalf("RunOnce: %v", err)
 		}
@@ -107,7 +107,7 @@ func TestRunOnce(t *testing.T) {
 		e.waitStatus(stopped, containerd.Stopped, 10*time.Second)
 		oldPid := stopped.Pid()
 
-		freshTask, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage)
+		freshTask, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage, nil)
 		if err != nil {
 			t.Fatalf("RunOnce: %v", err)
 		}
@@ -126,9 +126,38 @@ func TestRunOnce(t *testing.T) {
 
 		// we use localhost to fake registry and image.
 		// This way we force pull image error.
-		_, _, err := e.tw.RunOnce(e.ctx, e.name, "127.0.0.1:1/does-not-exist:latest")
+		_, _, err := e.tw.RunOnce(e.ctx, e.name, "127.0.0.1:1/does-not-exist:latest", nil)
 		if err == nil {
 			t.Fatal("RunOnce with a bad image should return an error")
+		}
+	})
+
+	t.Run("WithCmd", func(t *testing.T) {
+		e := newTestEnv(t)
+
+		cmd := []string{"sh", "-c", "exit 7"}
+		_, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage, cmd)
+		if err != nil {
+			t.Fatalf("RunOnce: %v", err)
+		}
+		if code := e.waitExit(exitCh, 15*time.Second); code != 7 {
+			t.Errorf("exit code = %d, want 7", code)
+		}
+	})
+
+	// Cmd only applies when RunOnce creates the container.
+	// maybe we should refactor RunOnce and split the function?
+	t.Run("CmdIgnoredOnExistingContainer", func(t *testing.T) {
+		e := newTestEnv(t)
+		e.createContainer()
+
+		cmd := []string{"sh", "-c", "exit 7"}
+		_, exitCh, err := e.tw.RunOnce(e.ctx, e.name, testImage, cmd)
+		if err != nil {
+			t.Fatalf("RunOnce: %v", err)
+		}
+		if code := e.waitExit(exitCh, 15*time.Second); code != 0 {
+			t.Errorf("exit code = %d, want 0", code)
 		}
 	})
 }
