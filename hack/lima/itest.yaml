@@ -1,0 +1,107 @@
+# Scaffolding and some ideas for this template come from lima vm's pre made templates 
+
+minimumLimaVersion: 2.0.0
+
+base:
+- template:_images/debian-13
+- template:_default/mounts
+
+cpus: 1
+memory: "2GiB"
+disk: "10GiB"
+
+containerd:
+  system: false
+  user: false
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+
+    # Setup of containerd, runc and cni plugins follows the github containerd getting started guide.
+    # The only difference is the sha check
+
+    CONTAINERD_VERSION=2.3.2
+    RUNC_VERSION=1.5.0
+    CNI_VERSION=1.9.1
+    ARCH=amd64
+
+    # Check if containerd is already installed
+    command -v containerd >/dev/null 2>&1 && exit 0
+
+    cd "$(mktemp -d)"
+
+    # Download containerd, check sha and extract
+    curl -fsSL -O "https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-${ARCH}.tar.gz"
+    curl -fsSL -O "https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-${ARCH}.tar.gz.sha256sum"
+    sha256sum -c "containerd-${CONTAINERD_VERSION}-linux-${ARCH}.tar.gz.sha256sum"
+    tar Cxzf /usr/local "containerd-${CONTAINERD_VERSION}-linux-${ARCH}.tar.gz"
+
+    # Download the containerd service to be used as systemd service
+    mkdir -p /usr/local/lib/systemd/system
+    curl -fsSL -o /usr/local/lib/systemd/system/containerd.service \
+      https://raw.githubusercontent.com/containerd/containerd/v${CONTAINERD_VERSION}/containerd.service
+
+    # Download runc and check sha
+    curl -fsSL -o runc.${ARCH} \
+      "https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.${ARCH}"
+    curl -fsSL -o runc.sha256sum \
+      "https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.sha256sum"
+    
+    # Single sha file for different oses, so we need to grep
+    grep "runc.${ARCH}\$" runc.sha256sum | sha256sum -c -
+
+    # Install runc
+    install -m 755 runc.${ARCH} /usr/local/sbin/runc
+
+    # Download the official cni plugins, check sha and extract the binaries
+    mkdir -p /opt/cni/bin
+    curl -fsSL -O "https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/cni-plugins-linux-${ARCH}-v${CNI_VERSION}.tgz"
+    curl -fsSL -O "https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/cni-plugins-linux-${ARCH}-v${CNI_VERSION}.tgz.sha256"
+    sha256sum -c "cni-plugins-linux-${ARCH}-v${CNI_VERSION}.tgz.sha256"
+    tar Cxzf /opt/cni/bin "cni-plugins-linux-${ARCH}-v${CNI_VERSION}.tgz"
+
+    # Write the default config file of containerd
+    mkdir -p /etc/containerd
+    containerd config default > /etc/containerd/config.toml
+    systemctl daemon-reload
+    systemctl enable --now containerd
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+
+    # With Go it is possible to run integration tests inside the lima VM
+
+    GO_VERSION=1.26.4
+    ARCH=amd64
+
+    # Check if go is already installed using the full path
+    command -v /usr/local/go/bin/go >/dev/null 2>&1 && exit 0
+
+    # Download and extract
+    cd "$(mktemp -d)"
+    curl -fsSL -O "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz"
+    tar -C /usr/local -xzf "go${GO_VERSION}.linux-${ARCH}.tar.gz"
+
+    # Set path
+    echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
+probes:
+- script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    
+    # Check via systemd if containerd is up and running
+    if ! timeout 30s bash -c "until systemctl is-active --quiet containerd; do sleep 3; done"; then
+      echo >&2 "containerd did not become active"
+      exit 1
+    fi
+  hint: "containerd failed to start, see /var/log/cloud-init-output.log in the VM"
+- script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    
+    # Ensure go is installed
+    command -v /usr/local/go/bin/go
+  hint: "Go was not installed correctly, see /var/log/cloud-init-output.log in the VM"
