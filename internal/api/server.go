@@ -4,36 +4,35 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
-)
 
-type serverConfig struct {
-	now    func() time.Time
-	logger *slog.Logger
-}
+	"github.com/fedebram/hambo/internal/container"
+)
 
 type server struct {
 	mux    *http.ServeMux
+	store  container.Store
 	now    func() time.Time
 	logger *slog.Logger
 }
 
 // Inspired by https://grafana.com/blog/how-i-write-http-services-in-go-after-13-years/
 
-func NewServer(options ...Option) http.Handler {
-	return newServer(options...)
+func NewServer(store container.Store, options ...Option) http.Handler {
+	return newServer(store, options...)
 }
 
-func newServer(options ...Option) *server {
-	config := serverConfig{now: time.Now, logger: slog.Default()}
-	for _, option := range options {
-		option(&config)
-	}
-
+func newServer(store container.Store, options ...Option) *server {
 	srv := &server{
 		mux:    http.NewServeMux(),
-		now:    config.now,
-		logger: config.logger,
+		store:  store,
+		now:    time.Now,
+		logger: slog.Default(),
 	}
+
+	for _, option := range options {
+		option(srv)
+	}
+
 	srv.addRoutes()
 
 	return srv

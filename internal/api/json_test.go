@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/fedebram/hambo/internal/container"
 )
 
 // We test some behaviour already implemented by encoding/json, even though
@@ -112,5 +114,7 @@ func newTestServer(t *testing.T) *server {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return newServer(WithLogger(logger))
+
+	store := container.NewMemoryStore()
+	return newServer(store, WithLogger(logger))
 }

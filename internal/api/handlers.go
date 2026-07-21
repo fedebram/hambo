@@ -1,9 +1,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
-	"time"
+
+	"github.com/fedebram/hambo/internal/container"
 )
+
+// TODO: return json error responses, including page not found and method not allowed (overriding the default mux behaviour)
 
 type healthResponse struct {
 	Status string `json:"status"`
@@ -11,11 +15,6 @@ type healthResponse struct {
 
 type createContainerRequest struct {
 	Name string `json:"name"`
-}
-
-type createContainerResponse struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
 }
 
 func (srv *server) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -30,8 +29,36 @@ func (srv *server) createContainerHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	srv.writeJSON(w, http.StatusCreated, createContainerResponse{
+	c := container.Container{
 		Name:      input.Name,
 		CreatedAt: srv.now().UTC(),
-	})
+	}
+
+	err := srv.store.Create(c)
+	if errors.Is(err, container.ErrAlreadyExists) {
+		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
+		return
+	}
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	srv.writeJSON(w, http.StatusCreated, c)
+}
+
+func (srv *server) getContainerHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	c, err := srv.store.Get(name)
+
+	if errors.Is(err, container.ErrNotFound) {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	srv.writeJSON(w, http.StatusOK, c)
 }
