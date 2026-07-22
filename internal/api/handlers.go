@@ -40,6 +40,7 @@ func (srv *server) createContainerHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
+		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -56,6 +57,7 @@ func (srv *server) getContainerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
