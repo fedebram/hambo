@@ -1,14 +1,10 @@
 package api
 
 import (
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/fedebram/hambo/internal/container"
 )
 
 // We test some behaviour already implemented by encoding/json, even though
@@ -108,13 +104,4 @@ func TestServerWriteJSON(t *testing.T) {
 
 		assertStatus(t, response.Code, http.StatusInternalServerError)
 	})
-}
-
-func newTestServer(t *testing.T) *server {
-	t.Helper()
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	store := container.NewMemoryStore()
-	return newServer(store, WithLogger(logger))
 }

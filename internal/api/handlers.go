@@ -14,7 +14,21 @@ type healthResponse struct {
 }
 
 type createContainerRequest struct {
-	Name string `json:"name"`
+	Name  string `json:"name"`
+	Image string `json:"image"`
+}
+
+func (input createContainerRequest) valid() map[string]string {
+	problems := make(map[string]string)
+
+	if input.Name == "" {
+		problems["name"] = "must be provided"
+	}
+	if input.Image == "" {
+		problems["image"] = "must be provided"
+	}
+
+	return problems
 }
 
 func (srv *server) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -29,8 +43,18 @@ func (srv *server) createContainerHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if problems := input.valid(); len(problems) > 0 {
+		srv.writeJSON(w, http.StatusUnprocessableEntity, struct {
+			Errors map[string]string `json:"errors"`
+		}{
+			Errors: problems,
+		})
+		return
+	}
+
 	c := container.Container{
 		Name:      input.Name,
+		Image:     input.Image,
 		CreatedAt: srv.now().UTC(),
 	}
 
