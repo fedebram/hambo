@@ -107,7 +107,7 @@ func TestCreateContainerRejectsMissingImage(t *testing.T) {
 		Name: "hello",
 	})
 
-	requireStatus(t, response.Code, http.StatusBadRequest)
+	requireStatus(t, response.Code, http.StatusUnprocessableEntity)
 	assertContentType(t, response.Header(), "application/json")
 
 	var got struct {
