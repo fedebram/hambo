@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,11 @@ func newTestServer(t *testing.T, options ...Option) *server {
 	t.Helper()
 
 	store := container.NewMemoryStore()
+
+	options = append([]Option{
+		WithLogger(slog.New(slog.DiscardHandler)),
+	}, options...)
+
 	return newServer(store, options...)
 }
 

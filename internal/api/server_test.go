@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -169,8 +170,9 @@ func TestContainerStoreFailuresReturnInternalServerError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			logger := slog.New(slog.DiscardHandler)
 			store := failingStore{err: errors.New("store unavailable")}
-			response := makeRequest(t, NewServer(store), tt.method, tt.path, tt.body)
+			response := makeRequest(t, NewServer(store, WithLogger(logger)), tt.method, tt.path, tt.body)
 
 			assertStatus(t, response.Code, http.StatusInternalServerError)
 		})
