@@ -139,3 +139,7 @@ func (s failingStore) Create(container.Container) error {
 func (s failingStore) Get(string) (container.Container, error) {
 	return container.Container{}, s.err
 }
+
+func (s failingStore) Modify(string, func(*container.Container)) error {
+	return s.err
+}

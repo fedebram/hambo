@@ -77,3 +77,51 @@ func TestMemoryStoreCreateRejectsDuplicate(t *testing.T) {
 		t.Errorf("got %+v, want %+v", got, original)
 	}
 }
+
+func TestMemoryStoreModify(t *testing.T) {
+	store := NewMemoryStore()
+
+	original := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateCreating,
+	}
+	if err := store.Create(original); err != nil {
+		t.Fatalf("unexpected create error: %v", err)
+	}
+
+	err := store.Modify("hello", func(container *Container) {
+		container.State = StateCreated
+	})
+	if err != nil {
+		t.Fatalf("unexpected modify error: %v", err)
+	}
+
+	got, err := store.Get("hello")
+	if err != nil {
+		t.Fatalf("unexpected get error: %v", err)
+	}
+
+	want := original
+	want.State = StateCreated
+
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestMemoryStoreModifyNotFound(t *testing.T) {
+	store := NewMemoryStore()
+
+	err := store.Modify("hello", func(container *Container) {
+		container.State = StateCreated
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("got %v error, want %v error", err, ErrNotFound)
+	}
+
+	_, err = store.Get("hello")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("container was stored after failed modify: %v", err)
+	}
+}

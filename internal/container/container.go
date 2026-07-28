@@ -11,4 +11,8 @@ type Container struct {
 
 type State string
 
-const StateRunning State = "running"
+const (
+	StateCreating State = "creating"
+	StateCreated  State = "created"
+	StateRunning  State = "running"
+)

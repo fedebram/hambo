@@ -1,16 +1,13 @@
 package container
 
 import (
-	"errors"
 	"sync"
 )
-
-var ErrNotFound = errors.New("container not found")
-var ErrAlreadyExists = errors.New("container already exists")
 
 type Store interface {
 	Create(Container) error
 	Get(name string) (Container, error)
+	Modify(name string, modify func(*Container)) error
 }
 
 type MemoryStore struct {
@@ -42,4 +39,17 @@ func (s *MemoryStore) Get(name string) (Container, error) {
 		return Container{}, ErrNotFound
 	}
 	return c, nil
+}
+
+func (s *MemoryStore) Modify(name string, modify func(*Container)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.containers[name]
+	if !ok {
+		return ErrNotFound
+	}
+
+	modify(&c)
+	s.containers[name] = c
+	return nil
 }
