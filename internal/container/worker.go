@@ -5,10 +5,10 @@ import "errors"
 type worker struct {
 	store   Store
 	runtime runtime
-	queue   *queue
+	queue   *Queue
 }
 
-func newWorker(store Store, runtime runtime, queue *queue) *worker {
+func newWorker(store Store, runtime runtime, queue *Queue) *worker {
 	return &worker{
 		store:   store,
 		runtime: runtime,

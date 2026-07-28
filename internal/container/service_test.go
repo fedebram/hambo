@@ -6,89 +6,68 @@ import (
 	"time"
 )
 
-// the pattern used on enqueuerFunc is like the handlerFunc of net/http
-
-type enqueuerFunc func(name string)
-
-func (f enqueuerFunc) add(name string) {
-	f(name)
-}
-
-type failingStore struct {
-	err error
-}
-
-func (s failingStore) Create(Container) error {
-	return s.err
-}
-
-func (s failingStore) Get(string) (Container, error) {
-	panic("unexpected call to Store.Get")
-}
-
-func (s failingStore) Modify(string, func(*Container)) error {
-	panic("unexpected call to Store.Modify")
-}
-
-type fakeClock struct {
-	current time.Time
-	advance time.Duration
-	calls   int
-}
-
-func newFakeClock(start time.Time, advance time.Duration) *fakeClock {
-	return &fakeClock{
-		current: start,
-		advance: advance,
-	}
-}
-
-// now is not safe to call concurrently.
-func (clock *fakeClock) now() time.Time {
-	now := clock.current
-	clock.current = clock.current.Add(clock.advance)
-	clock.calls++
-	return now
-}
-
 func TestServiceCreate(t *testing.T) {
 	store := NewMemoryStore()
-	enqueue := enqueuerFunc(func(string) {})
+	enqueueCalls := 0
+	enqueue := enqueuerFunc(func(string) {
+		enqueueCalls++
+	})
 
 	startTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
-	clock := newFakeClock(startTime, 0)
+	clock := newFakeClock(startTime, time.Minute)
 
-	s := newService(store, enqueue, withClock(clock.now))
+	s := NewService(store, enqueue, WithClock(clock.now))
 
-	container := Container{
-		Name:  "hello",
-		Image: "docker.io/library/alpine:latest",
+	tests := []struct {
+		container Container
+		wantTime  time.Time
+	}{
+		{
+			container: Container{
+				Name:  "hello",
+				Image: "docker.io/library/alpine:latest",
+			},
+			wantTime: startTime,
+		},
+		{
+			container: Container{
+				Name:  "database",
+				Image: "docker.io/library/postgres:latest",
+			},
+			wantTime: startTime.Add(time.Minute),
+		},
 	}
 
-	got, err := s.create(container)
-	if err != nil {
-		t.Fatalf("unexpected service create error: %v", err)
-	}
+	for _, tt := range tests {
+		got, err := s.Create(tt.container)
+		if err != nil {
+			t.Fatalf("unexpected service create error: %v", err)
+		}
 
-	want := container
-	want.State = StateCreating
-	want.CreatedAt = startTime
+		want := tt.container
+		want.State = StateCreating
+		want.CreatedAt = tt.wantTime
 
-	if got != want {
-		t.Errorf("got %+v, want %+v", got, want)
-	}
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
 
-	c, err := store.Get(want.Name)
-	if err != nil {
-		t.Fatalf("unexpected store get error: %v", err)
-	}
-	if c != want {
-		t.Errorf("got store %+v, want %+v", c, want)
+		stored, err := store.Get(want.Name)
+		if err != nil {
+			t.Fatalf("unexpected store get error: %v", err)
+		}
+		if stored != want {
+			t.Errorf("got stored container %+v, want %+v", stored, want)
+		}
 	}
 
 	// Ensure the clock is called exactly once per service create call.
-	if clock.calls != 1 {
-		t.Errorf("clock called %d times, want %d", clock.calls, 1)
+	if clock.calls != len(tests) {
+		t.Errorf("clock called %d times, want %d", clock.calls, len(tests))
+	}
+	// Ensure the enqueuer is called exactly once per service create call.
+	if enqueueCalls != len(tests) {
+		t.Errorf("enqueue called %d times, want %d", enqueueCalls, len(tests))
 	}
 }
 
@@ -108,14 +87,14 @@ func TestServiceCreateStoresContainerBeforeEnqueuing(t *testing.T) {
 		}
 	})
 
-	s := newService(store, enqueue)
+	s := NewService(store, enqueue)
 
 	container := Container{
 		Name:  "hello",
 		Image: "docker.io/library/alpine:latest",
 	}
 
-	if _, err := s.create(container); err != nil {
+	if _, err := s.Create(container); err != nil {
 		t.Fatalf("unexpected service create error %v", err)
 	}
 
@@ -132,9 +111,9 @@ func TestServiceCreateDoesNotEnqueueWhenStoreFails(t *testing.T) {
 	enqueue := enqueuerFunc(func(string) {
 		enqueued = true
 	})
-	s := newService(store, enqueue)
+	s := NewService(store, enqueue)
 
-	_, err := s.create(Container{
+	_, err := s.Create(Container{
 		Name:  "hello",
 		Image: "docker.io/library/alpine:latest",
 	})
@@ -144,5 +123,28 @@ func TestServiceCreateDoesNotEnqueueWhenStoreFails(t *testing.T) {
 
 	if enqueued {
 		t.Errorf("container enqueued after store failure")
+	}
+}
+
+func TestServiceGet(t *testing.T) {
+	store := NewMemoryStore()
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateCreating,
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	enqueue := enqueuerFunc(func(string) {})
+	service := NewService(store, enqueue)
+
+	got, err := service.Get(container.Name)
+	if err != nil {
+		t.Fatalf("unexpected service get error: %v", err)
+	}
+	if got != container {
+		t.Errorf("got %+v, want %+v", got, container)
 	}
 }

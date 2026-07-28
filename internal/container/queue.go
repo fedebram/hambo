@@ -6,20 +6,20 @@ import "sync"
 // https://github.com/kubernetes/client-go/blob/master/util/workqueue/queue.go
 // TODO: license?
 
-type queue struct {
+type Queue struct {
 	mu           sync.Mutex
 	cond         *sync.Cond
 	items        []string
 	shuttingDown bool
 }
 
-func newQueue() *queue {
-	q := &queue{}
+func NewQueue() *Queue {
+	q := &Queue{}
 	q.cond = sync.NewCond(&q.mu)
 	return q
 }
 
-func (q *queue) add(name string) {
+func (q *Queue) add(name string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.shuttingDown {
@@ -31,7 +31,7 @@ func (q *queue) add(name string) {
 	q.cond.Signal()
 }
 
-func (q *queue) get() (name string, shutdown bool) {
+func (q *Queue) get() (name string, shutdown bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -50,14 +50,14 @@ func (q *queue) get() (name string, shutdown bool) {
 	return name, false
 }
 
-func (q *queue) len() int {
+func (q *Queue) len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	return len(q.items)
 }
 
-func (q *queue) shutdown() {
+func (q *Queue) shutdown() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 

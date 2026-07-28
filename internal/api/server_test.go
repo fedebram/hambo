@@ -39,49 +39,31 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestCreateContainer(t *testing.T) {
-	startTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
-	clock := newFakeClock(startTime, time.Minute)
+	fixedTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
+	srv := newTestServer(t, container.WithClock(func() time.Time {
+		return fixedTime
+	}))
 
-	tests := []struct {
-		name          string
-		containerName string
-		wantTime      time.Time
-	}{
-		{"creates hello container", "hello", startTime},
-		{"creates database container", "database", startTime.Add(time.Minute)},
-		{"creates worker container", "worker", startTime.Add(2 * time.Minute)},
+	response := makeRequest(t, srv, http.MethodPost, "/containers", createContainerRequest{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+	})
+
+	assertStatus(t, response.Code, http.StatusCreated)
+	assertContentType(t, response.Header(), "application/json")
+
+	var got container.Container
+	decodeJSON(t, response.Body, &got)
+
+	want := container.Container{
+		Name:      "hello",
+		Image:     "docker.io/library/alpine:latest",
+		State:     container.StateCreating,
+		CreatedAt: fixedTime,
 	}
 
-	srv := newTestServer(t, WithClock(clock.now))
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			response := makeRequest(t, srv, http.MethodPost, "/containers", createContainerRequest{
-				Name:  tt.containerName,
-				Image: "docker.io/library/alpine:latest",
-			})
-
-			assertStatus(t, response.Code, http.StatusCreated)
-			assertContentType(t, response.Header(), "application/json")
-
-			var got container.Container
-			decodeJSON(t, response.Body, &got)
-
-			want := container.Container{
-				Name:      tt.containerName,
-				Image:     "docker.io/library/alpine:latest",
-				CreatedAt: tt.wantTime,
-			}
-
-			if got != want {
-				t.Errorf("got %+v, want %+v", got, want)
-			}
-		})
-	}
-
-	// Ensure the clock is called exactly once per request.
-	if clock.calls != len(tests) {
-		t.Errorf("clock called %d times, want %d", clock.calls, len(tests))
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
 
@@ -172,7 +154,8 @@ func TestContainerStoreFailuresReturnInternalServerError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := slog.New(slog.DiscardHandler)
 			store := failingStore{err: errors.New("store unavailable")}
-			response := makeRequest(t, NewServer(store, WithLogger(logger)), tt.method, tt.path, tt.body)
+			service := container.NewService(store, container.NewQueue())
+			response := makeRequest(t, NewServer(service, WithLogger(logger)), tt.method, tt.path, tt.body)
 
 			assertStatus(t, response.Code, http.StatusInternalServerError)
 		})
@@ -181,8 +164,9 @@ func TestContainerStoreFailuresReturnInternalServerError(t *testing.T) {
 
 func TestCreateAndGetContainer(t *testing.T) {
 	fixedTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
-	clock := newFakeClock(fixedTime, 0)
-	srv := newTestServer(t, WithClock(clock.now))
+	srv := newTestServer(t, container.WithClock(func() time.Time {
+		return fixedTime
+	}))
 
 	createResponse := makeRequest(t, srv, http.MethodPost, "/containers", createContainerRequest{
 		Name:  "hello",
@@ -202,6 +186,7 @@ func TestCreateAndGetContainer(t *testing.T) {
 	want := container.Container{
 		Name:      "hello",
 		Image:     "docker.io/library/alpine:latest",
+		State:     container.StateCreating,
 		CreatedAt: fixedTime,
 	}
 
@@ -212,8 +197,9 @@ func TestCreateAndGetContainer(t *testing.T) {
 
 func TestCreateContainerRejectsDuplicateName(t *testing.T) {
 	firstTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
-	clock := newFakeClock(firstTime, time.Minute)
-	srv := newTestServer(t, WithClock(clock.now))
+	srv := newTestServer(t, container.WithClock(func() time.Time {
+		return firstTime
+	}))
 
 	firstResponse := makeRequest(t, srv, http.MethodPost, "/containers", createContainerRequest{
 		Name:  "hello",
@@ -239,6 +225,7 @@ func TestCreateContainerRejectsDuplicateName(t *testing.T) {
 	want := container.Container{
 		Name:      "hello",
 		Image:     "docker.io/library/alpine:latest",
+		State:     container.StateCreating,
 		CreatedAt: firstTime,
 	}
 
@@ -250,7 +237,8 @@ func TestCreateContainerRejectsDuplicateName(t *testing.T) {
 func TestGetReturnsContainerRunningState(t *testing.T) {
 	fixedTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
 	store := container.NewMemoryStore()
-	srv := NewServer(store)
+	service := container.NewService(store, container.NewQueue())
+	srv := NewServer(service)
 
 	if err := store.Create(container.Container{
 		Name:      "hello",
@@ -276,22 +264,5 @@ func TestGetReturnsContainerRunningState(t *testing.T) {
 
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
-	}
-}
-
-func TestCreateContainerOmitsState(t *testing.T) {
-	response := makeRequest(t, newTestServer(t), http.MethodPost, "/containers", createContainerRequest{
-		Name:  "hello",
-		Image: "docker.io/library/alpine:latest",
-	})
-
-	requireStatus(t, response.Code, http.StatusCreated)
-
-	// we need a map here because decoding into Container cannot tell whether state was omitted or returned as an empty string.
-	var got map[string]any
-	decodeJSON(t, response.Body, &got)
-
-	if _, ok := got["state"]; ok {
-		t.Error("response contains state, want it omitted")
 	}
 }

@@ -8,28 +8,14 @@ type enqueuer interface {
 	add(name string)
 }
 
-type service struct {
+type Service struct {
 	store Store
 	queue enqueuer
 	now   func() time.Time
 }
 
-// option represents a function that modifies or extends the service.
-type option func(*service)
-
-// withClock configures the function used by the service to get the current time.
-func withClock(now func() time.Time) option {
-	if now == nil {
-		panic("service: clock cannot be nil")
-	}
-
-	return func(s *service) {
-		s.now = now
-	}
-}
-
-func newService(store Store, queue enqueuer, options ...option) *service {
-	s := &service{
+func NewService(store Store, queue enqueuer, options ...ServiceOption) *Service {
+	s := &Service{
 		store: store,
 		queue: queue,
 		now:   time.Now,
@@ -41,7 +27,7 @@ func newService(store Store, queue enqueuer, options ...option) *service {
 	return s
 }
 
-func (s *service) create(container Container) (Container, error) {
+func (s *Service) Create(container Container) (Container, error) {
 	container.State = StateCreating
 	container.CreatedAt = s.now().UTC()
 
@@ -52,4 +38,8 @@ func (s *service) create(container Container) (Container, error) {
 	s.queue.add(container.Name)
 
 	return container, nil
+}
+
+func (s *Service) Get(name string) (Container, error) {
+	return s.store.Get(name)
 }

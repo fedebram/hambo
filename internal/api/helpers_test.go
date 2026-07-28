@@ -9,44 +9,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/fedebram/hambo/internal/container"
 )
 
-type fakeClock struct {
-	current time.Time
-	advance time.Duration
-	calls   int
-}
-
-// newFakeClock creates a new clock to be used by the server.
-// The now function starts at start and advances in time based on the advance paramenter
-func newFakeClock(start time.Time, advance time.Duration) *fakeClock {
-	return &fakeClock{
-		current: start,
-		advance: advance,
-	}
-}
-
-// now is not safe to call concurrently.
-func (clock *fakeClock) now() time.Time {
-	now := clock.current
-	clock.current = clock.current.Add(clock.advance)
-	clock.calls++
-	return now
-}
-
-func newTestServer(t *testing.T, options ...Option) *server {
+func newTestServer(t *testing.T, serviceOptions ...container.ServiceOption) *server {
 	t.Helper()
 
 	store := container.NewMemoryStore()
+	queue := container.NewQueue()
+	service := container.NewService(store, queue, serviceOptions...)
 
-	options = append([]Option{
-		WithLogger(slog.New(slog.DiscardHandler)),
-	}, options...)
-
-	return newServer(store, options...)
+	return newServer(service, WithLogger(slog.New(slog.DiscardHandler)))
 }
 
 func makeRequest(t *testing.T, handler http.Handler, method, path string, body any) *httptest.ResponseRecorder {

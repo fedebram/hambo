@@ -53,12 +53,11 @@ func (srv *server) createContainerHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	c := container.Container{
-		Name:      input.Name,
-		Image:     input.Image,
-		CreatedAt: srv.now().UTC(),
+		Name:  input.Name,
+		Image: input.Image,
 	}
 
-	err := srv.store.Create(c)
+	c, err := srv.service.Create(c)
 	if errors.Is(err, container.ErrAlreadyExists) {
 		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
 		return
@@ -74,7 +73,7 @@ func (srv *server) createContainerHandler(w http.ResponseWriter, r *http.Request
 func (srv *server) getContainerHandler(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
-	c, err := srv.store.Get(name)
+	c, err := srv.service.Get(name)
 
 	if errors.Is(err, container.ErrNotFound) {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)

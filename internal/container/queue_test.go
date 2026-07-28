@@ -14,7 +14,7 @@ import (
 
 func TestQueueGetWaitsForWork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		q := newQueue()
+		q := NewQueue()
 
 		type result struct {
 			name     string
@@ -58,7 +58,7 @@ func TestQueueGetWaitsForWork(t *testing.T) {
 
 func TestQueueShutdownWakesAllGetters(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		q := newQueue()
+		q := NewQueue()
 
 		const getters = 4
 
@@ -106,7 +106,7 @@ func TestQueueShutdownWakesAllGetters(t *testing.T) {
 }
 
 func TestQueueGetFIFO(t *testing.T) {
-	q := newQueue()
+	q := NewQueue()
 
 	q.add("first")
 	q.add("second")

@@ -31,7 +31,7 @@ func TestWorkerHandlesCreatingContainer(t *testing.T) {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
 
-	worker := newWorker(store, runtime, newQueue())
+	worker := newWorker(store, runtime, NewQueue())
 	if err := worker.handle(container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
 
-	worker := newWorker(store, runtime, newQueue())
+	worker := newWorker(store, runtime, NewQueue())
 	if err := worker.handle(container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
 func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 	store := NewMemoryStore()
 	runtime := newMemoryRuntime()
-	queue := newQueue()
+	queue := NewQueue()
 
 	container := Container{
 		Name:  "hello",
@@ -133,7 +133,7 @@ func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 func TestWorkerHandleNextReportsRuntimeFailure(t *testing.T) {
 	wantErr := errors.New("runtime unavailable")
 	store := NewMemoryStore()
-	queue := newQueue()
+	queue := NewQueue()
 
 	container := Container{
 		Name:  "hello",
@@ -160,7 +160,7 @@ func TestWorkerHandleNextReportsRuntimeFailure(t *testing.T) {
 }
 
 func TestWorkerHandleNextShutdown(t *testing.T) {
-	queue := newQueue()
+	queue := NewQueue()
 	queue.shutdown()
 
 	worker := newWorker(NewMemoryStore(), newMemoryRuntime(), queue)
@@ -178,7 +178,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := NewMemoryStore()
 		runtime := newMemoryRuntime()
-		queue := newQueue()
+		queue := NewQueue()
 
 		worker := newWorker(store, runtime, queue)
 

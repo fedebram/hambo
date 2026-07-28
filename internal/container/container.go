@@ -5,7 +5,7 @@ import "time"
 type Container struct {
 	Name      string    `json:"name"`
 	Image     string    `json:"image"`
-	State     State     `json:"state,omitempty"`
+	State     State     `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
