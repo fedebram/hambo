@@ -3,18 +3,21 @@ package container
 import (
 	"testing"
 	"testing/synctest"
+	"time"
 )
 
 // Here we use the synctest package. It is useful to ensure deterministic behaviour when dealing with goroutines.
 // Specifically we want to ensure that the goroutines are blocked before we make assertions.
 // Without synctest we would need to use timers or who knows what else!
 //
+// synctest is useful also when dealing with time... maybe in the future we can remove the fake clock implementation for the service
+//
 // An article from the go blog that explains the synctest package:
 // https://go.dev/blog/synctest
 
 func TestQueueGetWaitsForWork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		q := NewQueue()
+		q := NewMemoryQueue()
 
 		type result struct {
 			name     string
@@ -24,7 +27,7 @@ func TestQueueGetWaitsForWork(t *testing.T) {
 		got := make(chan result, 1)
 
 		go func() {
-			name, shutdown := q.get()
+			name, shutdown := q.Get()
 			got <- result{name, shutdown}
 		}()
 
@@ -37,7 +40,7 @@ func TestQueueGetWaitsForWork(t *testing.T) {
 		}
 		want := result{name: "hello"}
 
-		q.add(want.name)
+		q.Add(want.name)
 
 		synctest.Wait()
 
@@ -58,7 +61,7 @@ func TestQueueGetWaitsForWork(t *testing.T) {
 
 func TestQueueShutdownWakesAllGetters(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		q := NewQueue()
+		q := NewMemoryQueue()
 
 		const getters = 4
 
@@ -71,7 +74,7 @@ func TestQueueShutdownWakesAllGetters(t *testing.T) {
 
 		for range getters {
 			go func() {
-				name, shutdown := q.get()
+				name, shutdown := q.Get()
 				got <- result{
 					name:     name,
 					shutdown: shutdown,
@@ -87,7 +90,7 @@ func TestQueueShutdownWakesAllGetters(t *testing.T) {
 		default:
 		}
 
-		q.shutdown()
+		q.Shutdown()
 
 		synctest.Wait()
 
@@ -106,18 +109,18 @@ func TestQueueShutdownWakesAllGetters(t *testing.T) {
 }
 
 func TestQueueGetFIFO(t *testing.T) {
-	q := NewQueue()
+	q := NewMemoryQueue()
 
-	q.add("first")
-	q.add("second")
-	q.add("third")
+	q.Add("first")
+	q.Add("second")
+	q.Add("third")
 
 	if got := q.len(); got != 3 {
 		t.Fatalf("queue length: %d, want 3", got)
 	}
 
 	for _, want := range []string{"first", "second", "third"} {
-		got, shutdown := q.get()
+		got, shutdown := q.Get()
 
 		if shutdown {
 			t.Fatal("get returned shutdown true")
@@ -131,4 +134,107 @@ func TestQueueGetFIFO(t *testing.T) {
 	if got := q.len(); got != 0 {
 		t.Fatalf("queue length: %d, want 0", got)
 	}
+}
+
+func TestQueueAddDoesNotDuplicateQueuedName(t *testing.T) {
+	q := NewMemoryQueue()
+
+	q.Add("hello")
+	q.Add("hello")
+
+	if got := q.len(); got != 1 {
+		t.Fatalf("queue length: %d, want 1", got)
+	}
+
+	got, shutdown := q.Get()
+	if shutdown {
+		t.Fatal("get returned shutdown true")
+	}
+	if got != "hello" {
+		t.Fatalf("got queued name %q, want %q", got, "hello")
+	}
+
+	if got := q.len(); got != 0 {
+		t.Fatalf("queue length after get: %d, want 0", got)
+	}
+}
+
+func TestQueueAddWhileProcessingRequeuesAfterDone(t *testing.T) {
+	q := NewMemoryQueue()
+
+	q.Add("hello")
+
+	got, shutdown := q.Get()
+	if shutdown {
+		t.Fatal("get returned shutdown true")
+	}
+	if got != "hello" {
+		t.Fatalf("got queued name %q, want %q", got, "hello")
+	}
+
+	q.Add("hello")
+
+	if got := q.len(); got != 0 {
+		t.Fatalf("queue length while name is being processed: %d, want 0", got)
+	}
+
+	q.Done("hello")
+
+	if got := q.len(); got != 1 {
+		t.Fatalf("queue length after done: %d, want 1", got)
+	}
+
+	got, shutdown = q.Get()
+	if shutdown {
+		t.Fatal("get returned shutdown true")
+	}
+	if got != "hello" {
+		t.Fatalf("got requeued name %q, want %q", got, "hello")
+	}
+}
+
+func TestQueueAddAfter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		q := NewMemoryQueue()
+		defer q.Shutdown()
+
+		q.AddAfter("hello", time.Second)
+
+		if got := q.len(); got != 0 {
+			t.Fatalf("queue length before delay passed: %d, want 0", got)
+		}
+
+		// thanks synctest!!
+		time.Sleep(time.Second)
+		synctest.Wait()
+
+		if got := q.len(); got != 1 {
+			t.Fatalf("queue length after delay passed: %d, want 1", got)
+		}
+
+		got, shutdown := q.Get()
+		if shutdown {
+			t.Fatal("get returned shutdown true")
+		}
+		if got != "hello" {
+			t.Fatalf("got queued name %q, want %q", got, "hello")
+		}
+	})
+}
+
+func TestQueueShutdownDiscardsDelayedWork(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		q := NewMemoryQueue()
+		q.AddAfter("hello", time.Second)
+
+		synctest.Wait()
+
+		q.Shutdown()
+		time.Sleep(time.Second)
+		synctest.Wait()
+
+		if got := q.len(); got != 0 {
+			t.Fatalf("queue length after shutdown: %d, want 0", got)
+		}
+	})
 }

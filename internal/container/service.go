@@ -5,7 +5,7 @@ import "time"
 // the service needs only queue.add!! So no need for the entire behaviour of the queue.
 
 type enqueuer interface {
-	add(name string)
+	Add(name string)
 }
 
 type Service struct {
@@ -35,7 +35,7 @@ func (s *Service) Create(container Container) (Container, error) {
 		return Container{}, err
 	}
 
-	s.queue.add(container.Name)
+	s.queue.Add(container.Name)
 
 	return container, nil
 }

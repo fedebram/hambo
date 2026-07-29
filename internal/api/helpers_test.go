@@ -17,7 +17,7 @@ func newTestServer(t *testing.T, serviceOptions ...container.ServiceOption) *ser
 	t.Helper()
 
 	store := container.NewMemoryStore()
-	queue := container.NewQueue()
+	queue := container.NewMemoryQueue()
 	service := container.NewService(store, queue, serviceOptions...)
 
 	return newServer(service, WithLogger(slog.New(slog.DiscardHandler)))

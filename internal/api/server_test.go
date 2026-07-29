@@ -154,7 +154,7 @@ func TestContainerStoreFailuresReturnInternalServerError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := slog.New(slog.DiscardHandler)
 			store := failingStore{err: errors.New("store unavailable")}
-			service := container.NewService(store, container.NewQueue())
+			service := container.NewService(store, container.NewMemoryQueue())
 			response := makeRequest(t, NewServer(service, WithLogger(logger)), tt.method, tt.path, tt.body)
 
 			assertStatus(t, response.Code, http.StatusInternalServerError)
@@ -237,7 +237,7 @@ func TestCreateContainerRejectsDuplicateName(t *testing.T) {
 func TestGetReturnsContainerRunningState(t *testing.T) {
 	fixedTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
 	store := container.NewMemoryStore()
-	service := container.NewService(store, container.NewQueue())
+	service := container.NewService(store, container.NewMemoryQueue())
 	srv := NewServer(service)
 
 	if err := store.Create(container.Container{

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 	"testing/synctest"
+	"time"
 )
 
 type failingRuntime struct {
@@ -31,7 +32,7 @@ func TestWorkerHandlesCreatingContainer(t *testing.T) {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
 
-	worker := newWorker(store, runtime, NewQueue())
+	worker := newWorker(store, runtime, NewMemoryQueue())
 	if err := worker.handle(container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
 
-	worker := newWorker(store, runtime, NewQueue())
+	worker := newWorker(store, runtime, NewMemoryQueue())
 	if err := worker.handle(container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
@@ -93,7 +94,6 @@ func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
 func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 	store := NewMemoryStore()
 	runtime := newMemoryRuntime()
-	queue := NewQueue()
 
 	container := Container{
 		Name:  "hello",
@@ -103,7 +103,8 @@ func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 	if err := store.Create(container); err != nil {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
-	queue.add(container.Name)
+
+	queue := &recordingQueue{next: container.Name}
 
 	worker := newWorker(store, runtime, queue)
 	if _, err := worker.handleNext(); err != nil {
@@ -128,12 +129,20 @@ func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 	if got != want {
 		t.Errorf("got stored container %+v, want %+v", got, want)
 	}
+
+	if queue.doneCalls != 1 {
+		t.Fatalf("done calls: %d, want 1", queue.doneCalls)
+	}
+	if queue.doneName != container.Name {
+		t.Fatalf("done name %q, want %q", queue.doneName, container.Name)
+	}
 }
 
 func TestWorkerHandleNextReportsRuntimeFailure(t *testing.T) {
 	wantErr := errors.New("runtime unavailable")
 	store := NewMemoryStore()
-	queue := NewQueue()
+	queue := NewMemoryQueue()
+	defer queue.Shutdown()
 
 	container := Container{
 		Name:  "hello",
@@ -143,7 +152,7 @@ func TestWorkerHandleNextReportsRuntimeFailure(t *testing.T) {
 	if err := store.Create(container); err != nil {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
-	queue.add(container.Name)
+	queue.Add(container.Name)
 
 	worker := newWorker(store, failingRuntime{err: wantErr}, queue)
 	if _, err := worker.handleNext(); !errors.Is(err, wantErr) {
@@ -160,8 +169,8 @@ func TestWorkerHandleNextReportsRuntimeFailure(t *testing.T) {
 }
 
 func TestWorkerHandleNextShutdown(t *testing.T) {
-	queue := NewQueue()
-	queue.shutdown()
+	queue := NewMemoryQueue()
+	queue.Shutdown()
 
 	worker := newWorker(NewMemoryStore(), newMemoryRuntime(), queue)
 
@@ -178,7 +187,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := NewMemoryStore()
 		runtime := newMemoryRuntime()
-		queue := NewQueue()
+		queue := NewMemoryQueue()
 
 		worker := newWorker(store, runtime, queue)
 
@@ -205,7 +214,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 			if err := store.Create(container); err != nil {
 				t.Fatalf("unexpected store create error: %v", err)
 			}
-			queue.add(container.Name)
+			queue.Add(container.Name)
 		}
 
 		// wait on the worker to process all the containers
@@ -243,7 +252,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 			}
 		}
 
-		queue.shutdown()
+		queue.Shutdown()
 
 		synctest.Wait()
 
@@ -256,4 +265,47 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 			t.Fatal("worker did not return after shutdown")
 		}
 	})
+}
+
+func TestWorkerHandleNextRequeuesFailedWorkAfterDelay(t *testing.T) {
+	const wantRetryDelay = time.Second
+
+	wantErr := errors.New("runtime unavailable")
+	queue := &recordingQueue{next: "hello"}
+
+	worker := newWorker(
+		NewMemoryStore(),
+		failingRuntime{err: wantErr},
+		queue,
+	)
+
+	shutdown, err := worker.handleNext()
+	if shutdown {
+		t.Fatal("got shutdown true, want false")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("got error %v, want %v", err, wantErr)
+	}
+
+	// this is a "mechanical" test. we want the worker to just call queue AddAfter if there is an error.
+	// And that Done is called after processing.
+	if queue.addAfterCalls != 1 {
+		t.Fatalf("add after calls: %d, want 1", queue.addAfterCalls)
+	}
+
+	if queue.addAfterName != "hello" {
+		t.Fatalf("added name %q, want %q", queue.addAfterName, "hello")
+	}
+
+	if queue.addAfterDelay != wantRetryDelay {
+		t.Fatalf("add after delay: %v, want %v", queue.addAfterDelay, wantRetryDelay)
+	}
+
+	if queue.doneCalls != 1 {
+		t.Fatalf("done calls: %d, want 1", queue.doneCalls)
+	}
+
+	if queue.doneName != "hello" {
+		t.Fatalf("done name %q, want %q", queue.doneName, "hello")
+	}
 }

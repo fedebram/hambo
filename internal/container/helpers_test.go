@@ -29,7 +29,7 @@ func (clock *fakeClock) now() time.Time {
 
 type enqueuerFunc func(name string)
 
-func (f enqueuerFunc) add(name string) {
+func (f enqueuerFunc) Add(name string) {
 	f(name)
 }
 
@@ -47,4 +47,40 @@ func (s failingStore) Get(string) (Container, error) {
 
 func (s failingStore) Modify(string, func(*Container)) error {
 	panic("unexpected call to Store.Modify")
+}
+
+// recordingQueue records calls to AddAfter and Done
+type recordingQueue struct {
+	next          string
+	addAfterName  string
+	addAfterDelay time.Duration
+	addAfterCalls int
+	doneName      string
+	doneCalls     int
+	shuttingDown  bool
+}
+
+func (q *recordingQueue) Add(string) {}
+
+func (q *recordingQueue) Get() (string, bool) {
+	if q.shuttingDown {
+		return "", true
+	}
+
+	return q.next, false
+}
+
+func (q *recordingQueue) AddAfter(name string, delay time.Duration) {
+	q.addAfterName = name
+	q.addAfterDelay = delay
+	q.addAfterCalls++
+}
+
+func (q *recordingQueue) Done(name string) {
+	q.doneName = name
+	q.doneCalls++
+}
+
+func (q *recordingQueue) Shutdown() {
+	q.shuttingDown = true
 }

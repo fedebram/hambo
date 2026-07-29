@@ -1,14 +1,19 @@
 package container
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
+
+const retryDelay = time.Second
 
 type worker struct {
 	store   Store
 	runtime runtime
-	queue   *Queue
+	queue   Queue
 }
 
-func newWorker(store Store, runtime runtime, queue *Queue) *worker {
+func newWorker(store Store, runtime runtime, queue Queue) *worker {
 	return &worker{
 		store:   store,
 		runtime: runtime,
@@ -27,12 +32,15 @@ func (w *worker) handle(name string) error {
 }
 
 func (w *worker) handleNext() (shutdown bool, err error) {
-	name, shutdown := w.queue.get()
+	name, shutdown := w.queue.Get()
 	if shutdown {
 		return true, nil
 	}
+	defer w.queue.Done(name)
 
 	if err = w.handle(name); err != nil {
+		// fixed delay for now.
+		w.queue.AddAfter(name, retryDelay)
 		return false, err
 	}
 
