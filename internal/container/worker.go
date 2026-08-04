@@ -9,11 +9,11 @@ const retryDelay = time.Second
 
 type worker struct {
 	store   Store
-	runtime runtime
+	runtime Runtime
 	queue   Queue
 }
 
-func newWorker(store Store, runtime runtime, queue Queue) *worker {
+func newWorker(store Store, runtime Runtime, queue Queue) *worker {
 	return &worker{
 		store:   store,
 		runtime: runtime,
@@ -22,7 +22,7 @@ func newWorker(store Store, runtime runtime, queue Queue) *worker {
 }
 
 func (w *worker) handle(name string) error {
-	if err := w.runtime.create(name); err != nil && !errors.Is(err, ErrAlreadyExists) {
+	if err := w.runtime.Create(name); err != nil && !errors.Is(err, ErrAlreadyExists) {
 		return err
 	}
 

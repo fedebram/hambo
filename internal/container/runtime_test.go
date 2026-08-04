@@ -6,9 +6,9 @@ import (
 )
 
 func TestInspectMissingContainer(t *testing.T) {
-	runtime := newMemoryRuntime()
+	runtime := NewMemoryRuntime()
 
-	found, err := runtime.inspect("hello")
+	found, err := runtime.Inspect("hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -19,12 +19,12 @@ func TestInspectMissingContainer(t *testing.T) {
 }
 
 func TestCreateAndInspectContainer(t *testing.T) {
-	runtime := newMemoryRuntime()
-	if err := runtime.create("hello"); err != nil {
+	runtime := NewMemoryRuntime()
+	if err := runtime.Create("hello"); err != nil {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
 
-	found, err := runtime.inspect("hello")
+	found, err := runtime.Inspect("hello")
 	if err != nil {
 		t.Fatalf("unexpected runtime inspect error: %v", err)
 	}
@@ -35,12 +35,12 @@ func TestCreateAndInspectContainer(t *testing.T) {
 }
 
 func TestCreateRejectsDuplicateContainer(t *testing.T) {
-	runtime := newMemoryRuntime()
-	if err := runtime.create("hello"); err != nil {
+	runtime := NewMemoryRuntime()
+	if err := runtime.Create("hello"); err != nil {
 		t.Fatalf("unexpected first create error: %v", err)
 	}
 
-	err := runtime.create("hello")
+	err := runtime.Create("hello")
 
 	if !errors.Is(err, ErrAlreadyExists) {
 		t.Errorf("got error %v, want %v", err, ErrAlreadyExists)

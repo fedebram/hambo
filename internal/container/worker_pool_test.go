@@ -15,7 +15,7 @@ func TestRunWorkerPoolStopsOnContextCancellation(t *testing.T) {
 		queue := NewMemoryQueue()
 		worker := newWorker(
 			NewMemoryStore(),
-			newMemoryRuntime(),
+			NewMemoryRuntime(),
 			queue,
 		)
 

@@ -11,17 +11,17 @@ type failingRuntime struct {
 	err error
 }
 
-func (r failingRuntime) create(string) error {
+func (r failingRuntime) Create(string) error {
 	return r.err
 }
 
-func (r failingRuntime) inspect(string) (bool, error) {
-	panic("unexpected call to runtime.inspect")
+func (r failingRuntime) Inspect(string) (bool, error) {
+	panic("unexpected call to runtime.Inspect")
 }
 
 func TestWorkerHandlesCreatingContainer(t *testing.T) {
 	store := NewMemoryStore()
-	runtime := newMemoryRuntime()
+	runtime := NewMemoryRuntime()
 
 	container := Container{
 		Name:  "hello",
@@ -37,7 +37,7 @@ func TestWorkerHandlesCreatingContainer(t *testing.T) {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
-	found, err := runtime.inspect(container.Name)
+	found, err := runtime.Inspect(container.Name)
 	if err != nil {
 		t.Fatalf("unexpected runtime inspect error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestWorkerHandlesCreatingContainer(t *testing.T) {
 
 func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
 	store := NewMemoryStore()
-	runtime := newMemoryRuntime()
+	runtime := NewMemoryRuntime()
 
 	container := Container{
 		Name:  "hello",
@@ -70,7 +70,7 @@ func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
 
-	if err := runtime.create(container.Name); err != nil {
+	if err := runtime.Create(container.Name); err != nil {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
 
@@ -93,7 +93,7 @@ func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
 
 func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 	store := NewMemoryStore()
-	runtime := newMemoryRuntime()
+	runtime := NewMemoryRuntime()
 
 	container := Container{
 		Name:  "hello",
@@ -111,7 +111,7 @@ func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 		t.Fatalf("unexpected handle next error: %v", err)
 	}
 
-	found, err := runtime.inspect(container.Name)
+	found, err := runtime.Inspect(container.Name)
 	if err != nil {
 		t.Fatalf("unexpected runtime inspect error: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestWorkerHandleNextShutdown(t *testing.T) {
 	queue := NewMemoryQueue()
 	queue.Shutdown()
 
-	worker := newWorker(NewMemoryStore(), newMemoryRuntime(), queue)
+	worker := newWorker(NewMemoryStore(), NewMemoryRuntime(), queue)
 
 	shutdown, err := worker.handleNext()
 	if err != nil {
@@ -186,7 +186,7 @@ func TestWorkerHandleNextShutdown(t *testing.T) {
 func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := NewMemoryStore()
-		runtime := newMemoryRuntime()
+		runtime := NewMemoryRuntime()
 		queue := NewMemoryQueue()
 
 		worker := newWorker(store, runtime, queue)
@@ -232,7 +232,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 		}
 
 		for _, container := range containers {
-			found, err := runtime.inspect(container.Name)
+			found, err := runtime.Inspect(container.Name)
 			if err != nil {
 				t.Fatalf("unexpected runtime inspect error: %v", err)
 			}

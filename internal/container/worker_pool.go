@@ -5,6 +5,17 @@ import (
 	"sync"
 )
 
+func RunWorkerPool(
+	ctx context.Context,
+	count int,
+	store Store,
+	runtime Runtime,
+	queue Queue,
+	reportError func(error),
+) {
+	runWorkerPool(ctx, count, newWorker(store, runtime, queue), reportError)
+}
+
 func runWorkerPool(ctx context.Context, count int, worker *worker, reportError func(error)) {
 	var workers sync.WaitGroup
 

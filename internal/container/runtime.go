@@ -2,23 +2,23 @@ package container
 
 import "sync"
 
-type runtime interface {
-	inspect(name string) (bool, error)
-	create(name string) error
+type Runtime interface {
+	Inspect(name string) (bool, error)
+	Create(name string) error
 }
 
-type memoryRuntime struct {
+type MemoryRuntime struct {
 	mu         sync.Mutex
 	containers map[string]struct{}
 }
 
-func newMemoryRuntime() *memoryRuntime {
-	return &memoryRuntime{
+func NewMemoryRuntime() *MemoryRuntime {
+	return &MemoryRuntime{
 		containers: make(map[string]struct{}),
 	}
 }
 
-func (r *memoryRuntime) inspect(name string) (bool, error) {
+func (r *MemoryRuntime) Inspect(name string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -26,7 +26,7 @@ func (r *memoryRuntime) inspect(name string) (bool, error) {
 	return found, nil
 }
 
-func (r *memoryRuntime) create(name string) error {
+func (r *MemoryRuntime) Create(name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
