@@ -46,3 +46,30 @@ func TestCreateRejectsDuplicateContainer(t *testing.T) {
 		t.Errorf("got error %v, want %v", err, ErrAlreadyExists)
 	}
 }
+
+func TestDeleteContainer(t *testing.T) {
+	runtime := NewMemoryRuntime()
+	if err := runtime.Create("hello"); err != nil {
+		t.Fatalf("unexpected create error: %v", err)
+	}
+	if err := runtime.Delete("hello"); err != nil {
+		t.Fatalf("unexpected delete error: %v", err)
+	}
+
+	found, err := runtime.Inspect("hello")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if found {
+		t.Error("container found, want missing")
+	}
+}
+
+func TestDeleteMissingContainerIsNoOp(t *testing.T) {
+	runtime := NewMemoryRuntime()
+	// basically runtime delete is idempotent
+	if err := runtime.Delete("hello"); err != nil {
+		t.Fatalf("unexpected delete error: %v", err)
+	}
+}

@@ -114,6 +114,10 @@ func (s failingStore) Get(string) (container.Container, error) {
 	return container.Container{}, s.err
 }
 
-func (s failingStore) Modify(string, func(*container.Container)) error {
+func (s failingStore) Modify(string, func(*container.Container) error) error {
+	return s.err
+}
+
+func (s failingStore) Delete(string) error {
 	return s.err
 }

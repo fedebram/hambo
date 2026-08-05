@@ -136,6 +136,8 @@ func TestGetMissingContainerReturnsNotFound(t *testing.T) {
 	assertStatus(t, response.Code, http.StatusNotFound)
 }
 
+// TODO: we need to change this failure with service failure. Because the api server calls only the container service!
+// This reaults in a small refactor with a service interface
 func TestContainerStoreFailuresReturnInternalServerError(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -148,6 +150,7 @@ func TestContainerStoreFailuresReturnInternalServerError(t *testing.T) {
 			Name:  "hello",
 			Image: "docker.io/library/alpine:latest",
 		}},
+		{"DELETE", http.MethodDelete, "/containers/hello", nil},
 	}
 
 	for _, tt := range tests {
@@ -264,5 +267,115 @@ func TestGetReturnsContainerRunningState(t *testing.T) {
 
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestDeleteContainer(t *testing.T) {
+	fixedTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
+	srv := newTestServer(t, container.WithClock(func() time.Time {
+		return fixedTime
+	}))
+
+	createResponse := makeRequest(t, srv, http.MethodPost, "/containers", createContainerRequest{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+	})
+
+	requireStatus(t, createResponse.Code, http.StatusCreated)
+
+	deleteResponse := makeRequest(t, srv, http.MethodDelete, "/containers/hello", nil)
+
+	requireStatus(t, deleteResponse.Code, http.StatusAccepted)
+	assertContentType(t, deleteResponse.Header(), "application/json")
+
+	var got container.Container
+	decodeJSON(t, deleteResponse.Body, &got)
+
+	want := container.Container{
+		Name:              "hello",
+		Image:             "docker.io/library/alpine:latest",
+		State:             container.StateCreating,
+		CreatedAt:         fixedTime,
+		DeletionTimestamp: fixedTime,
+	}
+
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestDeleteContainerIsIdempotent(t *testing.T) {
+	now := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
+	// with this fake clock we prove that the second request doesn't create a new deletion timestamp
+	srv := newTestServer(t, container.WithClock(func() time.Time {
+		current := now
+		now = now.Add(time.Hour)
+		return current
+	}))
+
+	createResponse := makeRequest(t, srv, http.MethodPost, "/containers", createContainerRequest{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+	})
+	requireStatus(t, createResponse.Code, http.StatusCreated)
+
+	firstResponse := makeRequest(t, srv, http.MethodDelete, "/containers/hello", nil)
+	requireStatus(t, firstResponse.Code, http.StatusAccepted)
+
+	var first container.Container
+	decodeJSON(t, firstResponse.Body, &first)
+
+	secondResponse := makeRequest(t, srv, http.MethodDelete, "/containers/hello", nil)
+	requireStatus(t, secondResponse.Code, http.StatusAccepted)
+
+	var second container.Container
+	decodeJSON(t, secondResponse.Body, &second)
+
+	if second.DeletionTimestamp != first.DeletionTimestamp {
+		t.Errorf(
+			"got deletion timestamp %v, want preserved %v",
+			second.DeletionTimestamp,
+			first.DeletionTimestamp,
+		)
+	}
+}
+
+func TestDeleteMissingContainerReturnsNotFound(t *testing.T) {
+	response := makeRequest(
+		t,
+		newTestServer(t),
+		http.MethodDelete,
+		"/containers/missing",
+		nil,
+	)
+
+	assertStatus(t, response.Code, http.StatusNotFound)
+}
+
+func TestDeleteRunningContainerReturnsConflict(t *testing.T) {
+	store := container.NewMemoryStore()
+	service := container.NewService(store, container.NewMemoryQueue())
+	srv := NewServer(service)
+
+	want := container.Container{
+		Name:      "hello",
+		Image:     "docker.io/library/alpine:latest",
+		State:     container.StateRunning,
+		CreatedAt: time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC),
+	}
+	if err := store.Create(want); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	response := makeRequest(t, srv, http.MethodDelete, "/containers/hello", nil)
+
+	assertStatus(t, response.Code, http.StatusConflict)
+
+	got, err := store.Get(want.Name)
+	if err != nil {
+		t.Fatalf("unexpected store get error: %v", err)
+	}
+	if got != want {
+		t.Errorf("got stored container %+v, want unchanged %+v", got, want)
 	}
 }

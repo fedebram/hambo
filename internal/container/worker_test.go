@@ -19,6 +19,24 @@ func (r failingRuntime) Inspect(string) (bool, error) {
 	panic("unexpected call to runtime.Inspect")
 }
 
+func (r failingRuntime) Delete(string) error {
+	panic("unexpected call to runtime.Delete")
+}
+
+type runtimeDeleteFunc func(name string) error
+
+func (runtimeDeleteFunc) Create(string) error {
+	panic("unexpected call to runtime.Create")
+}
+
+func (runtimeDeleteFunc) Inspect(string) (bool, error) {
+	panic("unexpected call to runtime.Inspect")
+}
+
+func (f runtimeDeleteFunc) Delete(name string) error {
+	return f(name)
+}
+
 func TestWorkerHandlesCreatingContainer(t *testing.T) {
 	store := NewMemoryStore()
 	runtime := NewMemoryRuntime()
@@ -88,6 +106,79 @@ func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
 	want.State = StateCreated
 	if got != want {
 		t.Errorf("got stored container %+v, want %+v", got, want)
+	}
+}
+
+func TestWorkerHandlesDeletingContainer(t *testing.T) {
+	store := NewMemoryStore()
+	runtime := NewMemoryRuntime()
+
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateCreated,
+		DeletionTimestamp: time.Date(
+			2026, time.July, 19, 15, 0, 0, 0, time.UTC,
+		),
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+	if err := runtime.Create(container.Name); err != nil {
+		t.Fatalf("unexpected runtime create error: %v", err)
+	}
+
+	worker := newWorker(store, runtime, NewMemoryQueue())
+	if err := worker.handle(container.Name); err != nil {
+		t.Fatalf("unexpected handle error: %v", err)
+	}
+
+	found, err := runtime.Inspect(container.Name)
+	if err != nil {
+		t.Fatalf("unexpected runtime inspect error: %v", err)
+	}
+	if found {
+		t.Error("container found in runtime after deletion")
+	}
+
+	_, err = store.Get(container.Name)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got store error %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestWorkerMarksContainerDeletingBeforeRuntimeDeletion(t *testing.T) {
+	store := NewMemoryStore()
+	container := Container{
+		Name:              "hello",
+		State:             StateCreated,
+		DeletionTimestamp: time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC),
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	deleteCalled := false
+	runtime := runtimeDeleteFunc(func(name string) error {
+		deleteCalled = true
+
+		got, err := store.Get(name)
+		if err != nil {
+			t.Errorf("get container during runtime deletion: %v", err)
+			return nil
+		}
+		if got.State != StateDeleting {
+			t.Errorf("got state %q during runtime deletion, want %q", got.State, StateDeleting)
+		}
+		return nil
+	})
+
+	worker := newWorker(store, runtime, NewMemoryQueue())
+	if err := worker.handle(container.Name); err != nil {
+		t.Fatalf("unexpected handle error: %v", err)
+	}
+	if !deleteCalled {
+		t.Fatal("runtime delete was not called")
 	}
 }
 
@@ -197,24 +288,43 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 			errCh <- worker.run()
 		}()
 
-		containers := []Container{
+		deletionTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
+		tests := []struct {
+			container       Container
+			runtimeExists   bool
+			wantRuntime     bool
+			wantStoredState State
+		}{
 			{
-				Name:  "hello",
-				Image: "docker.io/library/alpine:latest",
-				State: StateCreating,
+				container: Container{
+					Name:  "hello",
+					Image: "docker.io/library/alpine:latest",
+					State: StateCreating,
+				},
+				wantRuntime:     true,
+				wantStoredState: StateCreated,
 			},
 			{
-				Name:  "database",
-				Image: "docker.io/library/postgres:latest",
-				State: StateCreating,
+				container: Container{
+					Name:              "database",
+					Image:             "docker.io/library/postgres:latest",
+					State:             StateCreated,
+					DeletionTimestamp: deletionTime,
+				},
+				runtimeExists: true,
 			},
 		}
 
-		for _, container := range containers {
-			if err := store.Create(container); err != nil {
+		for _, tt := range tests {
+			if err := store.Create(tt.container); err != nil {
 				t.Fatalf("unexpected store create error: %v", err)
 			}
-			queue.Add(container.Name)
+			if tt.runtimeExists {
+				if err := runtime.Create(tt.container.Name); err != nil {
+					t.Fatalf("unexpected runtime create error: %v", err)
+				}
+			}
+			queue.Add(tt.container.Name)
 		}
 
 		// wait on the worker to process all the containers
@@ -231,22 +341,38 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 		default:
 		}
 
-		for _, container := range containers {
-			found, err := runtime.Inspect(container.Name)
+		for _, tt := range tests {
+			found, err := runtime.Inspect(tt.container.Name)
 			if err != nil {
 				t.Fatalf("unexpected runtime inspect error: %v", err)
 			}
-			if !found {
-				t.Errorf("container %q missing from runtime after run", container.Name)
+			if found != tt.wantRuntime {
+				t.Errorf(
+					"container %q runtime existence: got %t, want %t",
+					tt.container.Name,
+					found,
+					tt.wantRuntime,
+				)
 			}
 
-			got, err := store.Get(container.Name)
+			got, err := store.Get(tt.container.Name)
+			if tt.wantStoredState == "" {
+				if !errors.Is(err, ErrNotFound) {
+					t.Errorf(
+						"container %q store error: got %v, want %v",
+						tt.container.Name,
+						err,
+						ErrNotFound,
+					)
+				}
+				continue
+			}
 			if err != nil {
 				t.Fatalf("unexpected store get error: %v", err)
 			}
 
-			want := container
-			want.State = StateCreated
+			want := tt.container
+			want.State = tt.wantStoredState
 			if got != want {
 				t.Errorf("got stored container %+v, want %+v", got, want)
 			}
@@ -271,10 +397,15 @@ func TestWorkerHandleNextRequeuesFailedWorkAfterDelay(t *testing.T) {
 	const wantRetryDelay = time.Second
 
 	wantErr := errors.New("runtime unavailable")
-	queue := &recordingQueue{next: "hello"}
+	container := Container{Name: "hello", State: StateCreating}
+	store := NewMemoryStore()
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+	queue := &recordingQueue{next: container.Name}
 
 	worker := newWorker(
-		NewMemoryStore(),
+		store,
 		failingRuntime{err: wantErr},
 		queue,
 	)

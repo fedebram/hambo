@@ -5,6 +5,7 @@ import "sync"
 type Runtime interface {
 	Inspect(name string) (bool, error)
 	Create(name string) error
+	Delete(name string) error
 }
 
 type MemoryRuntime struct {
@@ -36,5 +37,12 @@ func (r *MemoryRuntime) Create(name string) error {
 
 	r.containers[name] = struct{}{}
 
+	return nil
+}
+
+func (r *MemoryRuntime) Delete(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.containers, name)
 	return nil
 }

@@ -7,7 +7,8 @@ import (
 type Store interface {
 	Create(Container) error
 	Get(name string) (Container, error)
-	Modify(name string, modify func(*Container)) error
+	Modify(name string, modify func(*Container) error) error
+	Delete(name string) error
 }
 
 type MemoryStore struct {
@@ -41,7 +42,7 @@ func (s *MemoryStore) Get(name string) (Container, error) {
 	return c, nil
 }
 
-func (s *MemoryStore) Modify(name string, modify func(*Container)) error {
+func (s *MemoryStore) Modify(name string, modify func(*Container) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.containers[name]
@@ -49,7 +50,16 @@ func (s *MemoryStore) Modify(name string, modify func(*Container)) error {
 		return ErrNotFound
 	}
 
-	modify(&c)
+	if err := modify(&c); err != nil {
+		return err
+	}
 	s.containers[name] = c
+	return nil
+}
+
+func (s *MemoryStore) Delete(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.containers, name)
 	return nil
 }

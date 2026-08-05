@@ -54,11 +54,16 @@ func TestRunWorkerPoolReportsWorkerErrors(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), retryDelay/2)
 		defer cancel()
 
+		container := Container{Name: "hello", State: StateCreating}
+		store := NewMemoryStore()
+		if err := store.Create(container); err != nil {
+			t.Fatalf("unexpected store create error: %v", err)
+		}
 		queue := NewMemoryQueue()
-		queue.Add("hello")
+		queue.Add(container.Name)
 
 		worker := newWorker(
-			NewMemoryStore(),
+			store,
 			failingRuntime{err: wantErr},
 			queue,
 		)
@@ -90,11 +95,16 @@ func TestRunWorkerPoolRestartsWorkerAfterError(t *testing.T) {
 		)
 		defer cancel()
 
+		container := Container{Name: "hello", State: StateCreating}
+		store := NewMemoryStore()
+		if err := store.Create(container); err != nil {
+			t.Fatalf("unexpected store create error: %v", err)
+		}
 		queue := NewMemoryQueue()
-		queue.Add("hello")
+		queue.Add(container.Name)
 
 		worker := newWorker(
-			NewMemoryStore(),
+			store,
 			failingRuntime{err: wantErr},
 			queue,
 		)

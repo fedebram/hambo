@@ -45,8 +45,12 @@ func (s failingStore) Get(string) (Container, error) {
 	panic("unexpected call to Store.Get")
 }
 
-func (s failingStore) Modify(string, func(*Container)) error {
+func (s failingStore) Modify(string, func(*Container) error) error {
 	panic("unexpected call to Store.Modify")
+}
+
+func (s failingStore) Delete(string) error {
+	panic("unexpected call to Store.Delete")
 }
 
 // recordingQueue records calls to AddAfter and Done
