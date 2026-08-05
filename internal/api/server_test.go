@@ -136,9 +136,7 @@ func TestGetMissingContainerReturnsNotFound(t *testing.T) {
 	assertStatus(t, response.Code, http.StatusNotFound)
 }
 
-// TODO: we need to change this failure with service failure. Because the api server calls only the container service!
-// This reaults in a small refactor with a service interface
-func TestContainerStoreFailuresReturnInternalServerError(t *testing.T) {
+func TestContainerServiceFailuresReturnInternalServerError(t *testing.T) {
 	tests := []struct {
 		name   string
 		method string
@@ -156,8 +154,7 @@ func TestContainerStoreFailuresReturnInternalServerError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := slog.New(slog.DiscardHandler)
-			store := failingStore{err: errors.New("store unavailable")}
-			service := container.NewService(store, container.NewMemoryQueue())
+			service := failingService{err: errors.New("service unavailable")}
 			response := makeRequest(t, NewServer(service, WithLogger(logger)), tt.method, tt.path, tt.body)
 
 			assertStatus(t, response.Code, http.StatusInternalServerError)

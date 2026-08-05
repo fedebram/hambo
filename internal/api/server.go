@@ -7,19 +7,25 @@ import (
 	"github.com/fedebram/hambo/internal/container"
 )
 
+type containerService interface {
+	Create(container.Container) (container.Container, error)
+	Get(name string) (container.Container, error)
+	Delete(name string) (container.Container, error)
+}
+
 type server struct {
 	mux     *http.ServeMux
-	service *container.Service
+	service containerService
 	logger  *slog.Logger
 }
 
 // Inspired by https://grafana.com/blog/how-i-write-http-services-in-go-after-13-years/
 
-func NewServer(service *container.Service, options ...ServerOption) http.Handler {
+func NewServer(service containerService, options ...ServerOption) http.Handler {
 	return newServer(service, options...)
 }
 
-func newServer(service *container.Service, options ...ServerOption) *server {
+func newServer(service containerService, options ...ServerOption) *server {
 	srv := &server{
 		mux:     http.NewServeMux(),
 		service: service,

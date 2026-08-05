@@ -101,23 +101,19 @@ func decodeJSON(t *testing.T, r io.Reader, dst any) {
 	}
 }
 
-// failingStore lets us test how the api handles unexpected store errors.
-type failingStore struct {
+// failingService lets us test how the API handles unexpected service errors.
+type failingService struct {
 	err error
 }
 
-func (s failingStore) Create(container.Container) error {
-	return s.err
-}
-
-func (s failingStore) Get(string) (container.Container, error) {
+func (s failingService) Create(container.Container) (container.Container, error) {
 	return container.Container{}, s.err
 }
 
-func (s failingStore) Modify(string, func(*container.Container) error) error {
-	return s.err
+func (s failingService) Get(string) (container.Container, error) {
+	return container.Container{}, s.err
 }
 
-func (s failingStore) Delete(string) error {
-	return s.err
+func (s failingService) Delete(string) (container.Container, error) {
+	return container.Container{}, s.err
 }
