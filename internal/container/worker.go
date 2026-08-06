@@ -43,7 +43,7 @@ func (w *worker) handle(name string) error {
 }
 
 func (w *worker) handleCreation(container Container) error {
-	if err := w.runtime.Create(container.Name); err != nil && !errors.Is(err, ErrAlreadyExists) {
+	if err := w.runtime.CreateContainer(container.Name, container.Image); err != nil && !errors.Is(err, ErrAlreadyExists) {
 		return err
 	}
 
@@ -61,7 +61,7 @@ func (w *worker) handleDeletion(container Container) error {
 		return err
 	}
 
-	if err := w.runtime.Delete(container.Name); err != nil {
+	if err := w.runtime.DeleteContainer(container.Name); err != nil {
 		return err
 	}
 
