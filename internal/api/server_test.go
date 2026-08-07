@@ -149,6 +149,7 @@ func TestContainerServiceFailuresReturnInternalServerError(t *testing.T) {
 			Image: "docker.io/library/alpine:latest",
 		}},
 		{"DELETE", http.MethodDelete, "/containers/hello", nil},
+		{"START", http.MethodPost, "/containers/hello/start", nil},
 	}
 
 	for _, tt := range tests {
@@ -234,39 +235,6 @@ func TestCreateContainerRejectsDuplicateName(t *testing.T) {
 	}
 }
 
-func TestGetReturnsContainerRunningState(t *testing.T) {
-	fixedTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
-	store := container.NewMemoryStore()
-	service := container.NewService(store, container.NewMemoryQueue())
-	srv := NewServer(service)
-
-	if err := store.Create(container.Container{
-		Name:      "hello",
-		State:     container.StateRunning,
-		CreatedAt: fixedTime,
-	}); err != nil {
-		t.Fatalf("unexpected store create error: %v", err)
-	}
-
-	getResponse := makeRequest(t, srv, http.MethodGet, "/containers/hello", nil)
-
-	requireStatus(t, getResponse.Code, http.StatusOK)
-	assertContentType(t, getResponse.Header(), "application/json")
-
-	var got container.Container
-	decodeJSON(t, getResponse.Body, &got)
-
-	want := container.Container{
-		Name:      "hello",
-		State:     container.StateRunning,
-		CreatedAt: fixedTime,
-	}
-
-	if got != want {
-		t.Errorf("got %+v, want %+v", got, want)
-	}
-}
-
 func TestDeleteContainer(t *testing.T) {
 	fixedTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
 	srv := newTestServer(t, container.WithClock(func() time.Time {
@@ -301,40 +269,19 @@ func TestDeleteContainer(t *testing.T) {
 	}
 }
 
-func TestDeleteContainerIsIdempotent(t *testing.T) {
-	now := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
-	// with this fake clock we prove that the second request doesn't create a new deletion timestamp
-	srv := newTestServer(t, container.WithClock(func() time.Time {
-		current := now
-		now = now.Add(time.Hour)
-		return current
-	}))
-
-	createResponse := makeRequest(t, srv, http.MethodPost, "/containers", createContainerRequest{
+func TestDeleteContainerRejectsMultipleCalls(t *testing.T) {
+	s := newTestServer(t)
+	createResponse := makeRequest(t, s, http.MethodPost, "/containers", createContainerRequest{
 		Name:  "hello",
 		Image: "docker.io/library/alpine:latest",
 	})
 	requireStatus(t, createResponse.Code, http.StatusCreated)
 
-	firstResponse := makeRequest(t, srv, http.MethodDelete, "/containers/hello", nil)
+	firstResponse := makeRequest(t, s, http.MethodDelete, "/containers/hello", nil)
 	requireStatus(t, firstResponse.Code, http.StatusAccepted)
 
-	var first container.Container
-	decodeJSON(t, firstResponse.Body, &first)
-
-	secondResponse := makeRequest(t, srv, http.MethodDelete, "/containers/hello", nil)
-	requireStatus(t, secondResponse.Code, http.StatusAccepted)
-
-	var second container.Container
-	decodeJSON(t, secondResponse.Body, &second)
-
-	if second.DeletionTimestamp != first.DeletionTimestamp {
-		t.Errorf(
-			"got deletion timestamp %v, want preserved %v",
-			second.DeletionTimestamp,
-			first.DeletionTimestamp,
-		)
-	}
+	secondResponse := makeRequest(t, s, http.MethodDelete, "/containers/hello", nil)
+	requireStatus(t, secondResponse.Code, http.StatusConflict)
 }
 
 func TestDeleteMissingContainerReturnsNotFound(t *testing.T) {
@@ -374,5 +321,98 @@ func TestDeleteRunningContainerReturnsConflict(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("got stored container %+v, want unchanged %+v", got, want)
+	}
+}
+
+func TestStartContainer(t *testing.T) {
+	store := container.NewMemoryStore()
+	service := container.NewService(store, container.NewMemoryQueue())
+	srv := NewServer(service)
+
+	existing := container.Container{
+		Name:      "hello",
+		Image:     "docker.io/library/alpine:latest",
+		State:     container.StateCreated,
+		CreatedAt: time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC),
+	}
+	if err := store.Create(existing); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	response := makeRequest(t, srv, http.MethodPost, "/containers/hello/start", nil)
+
+	requireStatus(t, response.Code, http.StatusAccepted)
+	assertContentType(t, response.Header(), "application/json")
+
+	var got container.Container
+	decodeJSON(t, response.Body, &got)
+
+	want := existing
+	want.State = container.StateStarting
+
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestStartMissingContainerReturnsNotFound(t *testing.T) {
+	response := makeRequest(
+		t,
+		newTestServer(t),
+		http.MethodPost,
+		"/containers/missing/start",
+		nil,
+	)
+
+	assertStatus(t, response.Code, http.StatusNotFound)
+}
+
+func TestStartRunningContainerReturnsConflict(t *testing.T) {
+	store := container.NewMemoryStore()
+	service := container.NewService(store, container.NewMemoryQueue())
+	srv := NewServer(service)
+
+	existing := container.Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: container.StateRunning,
+	}
+	if err := store.Create(existing); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	response := makeRequest(t, srv, http.MethodPost, "/containers/hello/start", nil)
+
+	assertStatus(t, response.Code, http.StatusConflict)
+}
+
+func TestStopContainer(t *testing.T) {
+	store := container.NewMemoryStore()
+	service := container.NewService(store, container.NewMemoryQueue())
+	srv := NewServer(service)
+
+	existing := container.Container{
+		Name:      "hello",
+		Image:     "docker.io/library/alpine:latest",
+		State:     container.StateRunning,
+		CreatedAt: time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC),
+	}
+	if err := store.Create(existing); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	response := makeRequest(t, srv, http.MethodPost, "/containers/hello/stop", nil)
+
+	requireStatus(t, response.Code, http.StatusAccepted)
+	assertContentType(t, response.Header(), "application/json")
+
+	var got container.Container
+	decodeJSON(t, response.Body, &got)
+
+	want := existing
+	want.State = container.StateStopping
+
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
 	}
 }

@@ -10,6 +10,8 @@ import (
 type containerService interface {
 	Create(container.Container) (container.Container, error)
 	Get(name string) (container.Container, error)
+	Start(name string) (container.Container, error)
+	Stop(name string) (container.Container, error)
 	Delete(name string) (container.Container, error)
 }
 

@@ -2,6 +2,7 @@ package container
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -111,19 +112,18 @@ func TestWorkerHandlesCreatingContainer(t *testing.T) {
 	}
 }
 
-func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
+func TestWorkerHandlesStartingContainer(t *testing.T) {
 	store := NewMemoryStore()
 	runtime := NewMemoryRuntime()
 
 	container := Container{
 		Name:  "hello",
 		Image: "docker.io/library/alpine:latest",
-		State: StateCreating,
+		State: StateStarting,
 	}
 	if err := store.Create(container); err != nil {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
-
 	if err := runtime.CreateContainer(container.Name, container.Image); err != nil {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
@@ -133,13 +133,79 @@ func TestWorkerHandlesContainerAlreadyInRuntime(t *testing.T) {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
+	gotRuntime, err := runtime.Inspect(container.Name)
+	if err != nil {
+		t.Fatalf("unexpected runtime inspect error: %v", err)
+	}
+	wantRuntime := RuntimeContainer{
+		ID:    container.Name,
+		Image: container.Image,
+		Task: &RuntimeTask{
+			State: TaskStateRunning,
+		},
+	}
+	if !reflect.DeepEqual(gotRuntime, wantRuntime) {
+		// task is a pointer... it prints the pointer address...
+		// TODO: a better way to print and compare. google/go-cmp package?
+		t.Errorf("got runtime container %+v, want %+v", gotRuntime, wantRuntime)
+	}
+
 	got, err := store.Get(container.Name)
 	if err != nil {
 		t.Fatalf("unexpected store get error: %v", err)
 	}
-
 	want := container
-	want.State = StateCreated
+	want.State = StateRunning
+	if got != want {
+		t.Errorf("got stored container %+v, want %+v", got, want)
+	}
+}
+
+func TestWorkerHandlesStoppingContainer(t *testing.T) {
+	store := NewMemoryStore()
+	runtime := NewMemoryRuntime()
+
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateStopping,
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+	if err := runtime.CreateContainer(container.Name, container.Image); err != nil {
+		t.Fatalf("unexpected runtime create error: %v", err)
+	}
+	if err := runtime.CreateTask(container.Name); err != nil {
+		t.Fatalf("unexpected task create error: %v", err)
+	}
+	if err := runtime.StartTask(container.Name); err != nil {
+		t.Fatalf("unexpected task start error: %v", err)
+	}
+
+	worker := newWorker(store, runtime, NewMemoryQueue())
+	if err := worker.handle(container.Name); err != nil {
+		t.Fatalf("unexpected handle error: %v", err)
+	}
+
+	gotRuntime, err := runtime.Inspect(container.Name)
+	if err != nil {
+		t.Fatalf("unexpected runtime inspect error: %v", err)
+	}
+	wantRuntime := RuntimeContainer{
+		ID:    container.Name,
+		Image: container.Image,
+	}
+	if !reflect.DeepEqual(gotRuntime, wantRuntime) {
+		t.Errorf("got runtime container %+v, want %+v", gotRuntime, wantRuntime)
+	}
+
+	got, err := store.Get(container.Name)
+	if err != nil {
+		t.Fatalf("unexpected store get error: %v", err)
+	}
+	want := container
+	want.State = StateStopped
 	if got != want {
 		t.Errorf("got stored container %+v, want %+v", got, want)
 	}

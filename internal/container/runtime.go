@@ -105,6 +105,8 @@ func (r *MemoryRuntime) CreateTask(containerID string) error {
 		return fmt.Errorf("%w: id %q", ErrNotFound, containerID)
 	}
 	if c.Task != nil {
+		// TODO: we need better errors because this ErrAlreadyExists says "container already exists"
+		// but this is a task...
 		return ErrAlreadyExists
 	}
 
@@ -124,7 +126,6 @@ func (r *MemoryRuntime) StartTask(containerID string) error {
 
 	switch c.Task.State {
 	case TaskStateCreated:
-		// the runtime store is guarded by a mutex. So it is safe to mutate in place the content of the pointer.
 		c.Task.State = TaskStateRunning
 		return nil
 	case TaskStateRunning:
@@ -169,7 +170,10 @@ func (r *MemoryRuntime) DeleteTask(containerID string) error {
 	defer r.mu.Unlock()
 
 	c, found := r.containers[containerID]
-	if !found || c.Task == nil {
+	if !found {
+		return ErrNotFound
+	}
+	if c.Task == nil {
 		return nil
 	}
 	if c.Task.State == TaskStateRunning {

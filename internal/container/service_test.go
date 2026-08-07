@@ -9,8 +9,22 @@ import (
 func TestServiceCreate(t *testing.T) {
 	store := NewMemoryStore()
 	enqueueCalls := 0
-	enqueue := enqueuerFunc(func(string) {
+	var wantEnqueued Container
+	enqueue := enqueuerFunc(func(name string) {
 		enqueueCalls++
+
+		if name != wantEnqueued.Name {
+			t.Errorf("enqueued container name %q, want %q", name, wantEnqueued.Name)
+		}
+
+		stored, err := store.Get(name)
+		if err != nil {
+			t.Errorf("container not stored before enqueue: %v", err)
+			return
+		}
+		if stored != wantEnqueued {
+			t.Errorf("got stored container %+v before enqueue, want %+v", stored, wantEnqueued)
+		}
 	})
 
 	startTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
@@ -39,25 +53,18 @@ func TestServiceCreate(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		want := tt.container
+		want.State = StateCreating
+		want.CreatedAt = tt.wantTime
+		wantEnqueued = want
+
 		got, err := s.Create(tt.container)
 		if err != nil {
 			t.Fatalf("unexpected service create error: %v", err)
 		}
 
-		want := tt.container
-		want.State = StateCreating
-		want.CreatedAt = tt.wantTime
-
 		if got != want {
 			t.Errorf("got %+v, want %+v", got, want)
-		}
-
-		stored, err := store.Get(want.Name)
-		if err != nil {
-			t.Fatalf("unexpected store get error: %v", err)
-		}
-		if stored != want {
-			t.Errorf("got stored container %+v, want %+v", stored, want)
 		}
 	}
 
@@ -68,39 +75,6 @@ func TestServiceCreate(t *testing.T) {
 	// Ensure the enqueuer is called exactly once per service create call.
 	if enqueueCalls != len(tests) {
 		t.Errorf("enqueue called %d times, want %d", enqueueCalls, len(tests))
-	}
-}
-
-func TestServiceCreateStoresContainerBeforeEnqueuing(t *testing.T) {
-	store := NewMemoryStore()
-	var gotName string
-	enqueue := enqueuerFunc(func(name string) {
-		gotName = name
-
-		stored, err := store.Get(name)
-		if err != nil {
-			t.Errorf("container not stored before enqueue: %v", err)
-			return
-		}
-		if stored.State != StateCreating {
-			t.Errorf("got state %q when enqueued, want %q", stored.State, StateCreating)
-		}
-	})
-
-	s := NewService(store, enqueue)
-
-	container := Container{
-		Name:  "hello",
-		Image: "docker.io/library/alpine:latest",
-	}
-
-	if _, err := s.Create(container); err != nil {
-		t.Fatalf("unexpected service create error %v", err)
-	}
-
-	wantName := container.Name
-	if gotName != wantName {
-		t.Errorf("enqueued container name %q, want %q", gotName, wantName)
 	}
 }
 
@@ -149,8 +123,318 @@ func TestServiceGet(t *testing.T) {
 	}
 }
 
+func TestServiceStart(t *testing.T) {
+	store := NewMemoryStore()
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateCreated,
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	var enqueuedName string
+	enqueue := enqueuerFunc(func(name string) {
+		enqueuedName = name
+	})
+	service := NewService(store, enqueue)
+
+	got, err := service.Start(container.Name)
+	if err != nil {
+		t.Fatalf("unexpected service start error: %v", err)
+	}
+
+	want := container
+	want.State = StateStarting
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+
+	stored, err := store.Get(container.Name)
+	if err != nil {
+		t.Fatalf("get stored container: %v", err)
+	}
+	if stored != want {
+		t.Errorf("got stored container %+v, want %+v", stored, want)
+	}
+
+	if enqueuedName != container.Name {
+		t.Errorf("enqueued %q, want %q", enqueuedName, container.Name)
+	}
+}
+
+func TestServiceStartStoresContainerBeforeEnqueueing(t *testing.T) {
+	store := NewMemoryStore()
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateCreated,
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	var enqueuedName string
+	enqueue := enqueuerFunc(func(name string) {
+		enqueuedName = name
+
+		stored, err := store.Get(name)
+		if err != nil {
+			t.Errorf("container not stored before enqueue: %v", err)
+			return
+		}
+		if stored.State != StateStarting {
+			t.Errorf("got state %q when enqueued, want %q", stored.State, StateStarting)
+		}
+	})
+	service := NewService(store, enqueue)
+
+	if _, err := service.Start(container.Name); err != nil {
+		t.Fatalf("unexpected service start error: %v", err)
+	}
+	if enqueuedName != container.Name {
+		t.Errorf("enqueued %q, want %q", enqueuedName, container.Name)
+	}
+}
+
+func TestServiceStartRejectsInvalidState(t *testing.T) {
+	for _, state := range []State{
+		StateCreating,
+		StateStarting,
+		StateRunning,
+		StateStopping,
+		StateStopped,
+		StateDeleting,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			store := NewMemoryStore()
+			container := Container{
+				Name:  "hello",
+				Image: "docker.io/library/alpine:latest",
+				State: state,
+			}
+			if err := store.Create(container); err != nil {
+				t.Fatalf("unexpected store create error: %v", err)
+			}
+
+			enqueued := false
+			enqueue := enqueuerFunc(func(string) {
+				enqueued = true
+			})
+			service := NewService(store, enqueue)
+
+			_, err := service.Start(container.Name)
+			if !errors.Is(err, ErrOperationNotAllowed) {
+				t.Fatalf("got error %v, want %v", err, ErrOperationNotAllowed)
+			}
+
+			stored, err := store.Get(container.Name)
+			if err != nil {
+				t.Fatalf("get stored container: %v", err)
+			}
+			if stored != container {
+				t.Errorf("got stored container %+v, want unchanged %+v", stored, container)
+			}
+			if enqueued {
+				t.Errorf("container in state %q was enqueued for start", state)
+			}
+		})
+	}
+}
+
+func TestServiceStartRejectsDeletionRequested(t *testing.T) {
+	store := NewMemoryStore()
+	container := Container{
+		Name:              "hello",
+		Image:             "docker.io/library/alpine:latest",
+		State:             StateCreated,
+		DeletionTimestamp: time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC),
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	enqueued := false
+	enqueue := enqueuerFunc(func(string) {
+		enqueued = true
+	})
+	service := NewService(store, enqueue)
+
+	_, err := service.Start(container.Name)
+	if !errors.Is(err, ErrOperationNotAllowed) {
+		t.Fatalf("got error %v, want %v", err, ErrOperationNotAllowed)
+	}
+
+	stored, err := store.Get(container.Name)
+	if err != nil {
+		t.Fatalf("get stored container: %v", err)
+	}
+	if stored != container {
+		t.Errorf("got stored container %+v, want unchanged %+v", stored, container)
+	}
+	if enqueued {
+		t.Error("container marked for deletion was enqueued for start")
+	}
+}
+
+func TestServiceStop(t *testing.T) {
+	store := NewMemoryStore()
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateRunning,
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	var enqueuedName string
+	enqueue := enqueuerFunc(func(name string) {
+		enqueuedName = name
+	})
+	service := NewService(store, enqueue)
+
+	got, err := service.Stop(container.Name)
+	if err != nil {
+		t.Fatalf("unexpected service stop error: %v", err)
+	}
+
+	want := container
+	want.State = StateStopping
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+
+	stored, err := store.Get(container.Name)
+	if err != nil {
+		t.Fatalf("get stored container: %v", err)
+	}
+	if stored != want {
+		t.Errorf("got stored container %+v, want %+v", stored, want)
+	}
+
+	if enqueuedName != container.Name {
+		t.Errorf("enqueued %q, want %q", enqueuedName, container.Name)
+	}
+}
+
+func TestServiceStopStoresContainerBeforeEnqueueing(t *testing.T) {
+	store := NewMemoryStore()
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateRunning,
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	var enqueuedName string
+	enqueue := enqueuerFunc(func(name string) {
+		enqueuedName = name
+
+		stored, err := store.Get(name)
+		if err != nil {
+			t.Errorf("container not stored before enqueue: %v", err)
+			return
+		}
+		if stored.State != StateStopping {
+			t.Errorf("got state %q when enqueued, want %q", stored.State, StateStopping)
+		}
+	})
+	service := NewService(store, enqueue)
+
+	if _, err := service.Stop(container.Name); err != nil {
+		t.Fatalf("unexpected service stop error: %v", err)
+	}
+	if enqueuedName != container.Name {
+		t.Errorf("enqueued %q, want %q", enqueuedName, container.Name)
+	}
+}
+
+func TestServiceStopRejectsInvalidState(t *testing.T) {
+	for _, state := range []State{
+		StateCreating,
+		StateCreated,
+		StateStarting,
+		StateStopping,
+		StateStopped,
+		StateDeleting,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			store := NewMemoryStore()
+			container := Container{
+				Name:  "hello",
+				Image: "docker.io/library/alpine:latest",
+				State: state,
+			}
+			if err := store.Create(container); err != nil {
+				t.Fatalf("unexpected store create error: %v", err)
+			}
+
+			enqueued := false
+			enqueue := enqueuerFunc(func(string) {
+				enqueued = true
+			})
+			service := NewService(store, enqueue)
+
+			_, err := service.Stop(container.Name)
+			if !errors.Is(err, ErrOperationNotAllowed) {
+				t.Fatalf("got error %v, want %v", err, ErrOperationNotAllowed)
+			}
+
+			stored, err := store.Get(container.Name)
+			if err != nil {
+				t.Fatalf("get stored container: %v", err)
+			}
+			if stored != container {
+				t.Errorf("got stored container %+v, want unchanged %+v", stored, container)
+			}
+			if enqueued {
+				t.Errorf("container in state %q was enqueued for stop", state)
+			}
+		})
+	}
+}
+
+func TestServiceStopRejectsDeletionRequested(t *testing.T) {
+	store := NewMemoryStore()
+	container := Container{
+		Name:              "hello",
+		Image:             "docker.io/library/alpine:latest",
+		State:             StateRunning,
+		DeletionTimestamp: time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC),
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	enqueued := false
+	enqueue := enqueuerFunc(func(string) {
+		enqueued = true
+	})
+	service := NewService(store, enqueue)
+
+	_, err := service.Stop(container.Name)
+	if !errors.Is(err, ErrOperationNotAllowed) {
+		t.Fatalf("got error %v, want %v", err, ErrOperationNotAllowed)
+	}
+
+	stored, err := store.Get(container.Name)
+	if err != nil {
+		t.Fatalf("get stored container: %v", err)
+	}
+	if stored != container {
+		t.Errorf("got stored container %+v, want unchanged %+v", stored, container)
+	}
+	if enqueued {
+		t.Error("container marked for deletion was enqueued for stop")
+	}
+}
+
 func TestServiceDelete(t *testing.T) {
-	for _, state := range []State{StateCreating, StateCreated} {
+	for _, state := range []State{StateCreating, StateCreated, StateStopped} {
 		t.Run(string(state), func(t *testing.T) {
 			store := NewMemoryStore()
 			container := Container{
@@ -200,64 +484,45 @@ func TestServiceDelete(t *testing.T) {
 	}
 }
 
-func TestServiceDeleteRejectsRunningContainer(t *testing.T) {
-	store := NewMemoryStore()
-	container := Container{
-		Name:  "hello",
-		Image: "docker.io/library/alpine:latest",
-		State: StateRunning,
-	}
-	if err := store.Create(container); err != nil {
-		t.Fatalf("unexpected store create error: %v", err)
-	}
+func TestServiceDeleteRejectsInvalidState(t *testing.T) {
+	for _, state := range []State{StateStarting, StateRunning, StateStopping} {
+		t.Run(string(state), func(t *testing.T) {
+			store := NewMemoryStore()
+			container := Container{
+				Name:  "hello",
+				Image: "docker.io/library/alpine:latest",
+				State: state,
+			}
+			if err := store.Create(container); err != nil {
+				t.Fatalf("unexpected store create error: %v", err)
+			}
 
-	enqueued := false
-	enqueue := enqueuerFunc(func(string) {
-		enqueued = true
-	})
-	service := NewService(store, enqueue)
+			enqueued := false
+			enqueue := enqueuerFunc(func(string) {
+				enqueued = true
+			})
+			service := NewService(store, enqueue)
 
-	_, err := service.Delete(container.Name)
-	if !errors.Is(err, ErrOperationNotAllowed) {
-		t.Fatalf("got error %v, want %v", err, ErrOperationNotAllowed)
-	}
+			_, err := service.Delete(container.Name)
+			if !errors.Is(err, ErrOperationNotAllowed) {
+				t.Fatalf("got error %v, want %v", err, ErrOperationNotAllowed)
+			}
 
-	stored, err := store.Get(container.Name)
-	if err != nil {
-		t.Fatalf("get stored container: %v", err)
-	}
-	if stored != container {
-		t.Errorf("got stored container %+v, want unchanged %+v", stored, container)
-	}
-
-	if enqueued {
-		t.Error("running container was enqueued for deletion")
+			stored, err := store.Get(container.Name)
+			if err != nil {
+				t.Fatalf("get stored container: %v", err)
+			}
+			if stored != container {
+				t.Errorf("got stored container %+v, want unchanged %+v", stored, container)
+			}
+			if enqueued {
+				t.Errorf("container in state %q was enqueued for deletion", state)
+			}
+		})
 	}
 }
 
-func TestServiceDeleteNotFound(t *testing.T) {
-	store := NewMemoryStore()
-	enqueued := false
-	enqueue := enqueuerFunc(func(string) {
-		enqueued = true
-	})
-	clock := newFakeClock(time.Time{}, 0)
-	service := NewService(store, enqueue, WithClock(clock.now))
-
-	_, err := service.Delete("missing")
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("got error %v, want %v", err, ErrNotFound)
-	}
-
-	if enqueued {
-		t.Error("missing container was enqueued for deletion")
-	}
-	if clock.calls != 0 {
-		t.Errorf("clock called %d times, want 0", clock.calls)
-	}
-}
-
-func TestServiceDeletePreservesDeletionTimestamp(t *testing.T) {
+func TestServiceDeleteRejectsAlreadyRequestedDeletion(t *testing.T) {
 	deletionTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
 	container := Container{
 		Name:              "hello",
@@ -270,19 +535,16 @@ func TestServiceDeletePreservesDeletionTimestamp(t *testing.T) {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
 
-	var enqueuedName string
+	enqueued := false
 	enqueue := enqueuerFunc(func(name string) {
-		enqueuedName = name
+		enqueued = true
 	})
 	clock := newFakeClock(deletionTime.Add(time.Minute), 0)
 	service := NewService(store, enqueue, WithClock(clock.now))
 
-	got, err := service.Delete(container.Name)
-	if err != nil {
-		t.Fatalf("unexpected service delete error: %v", err)
-	}
-	if got != container {
-		t.Errorf("got %+v, want unchanged %+v", got, container)
+	_, err := service.Delete(container.Name)
+	if !errors.Is(err, ErrOperationNotAllowed) {
+		t.Fatalf("got %v error, want %v error", err, ErrOperationNotAllowed)
 	}
 
 	stored, err := store.Get(container.Name)
@@ -293,8 +555,8 @@ func TestServiceDeletePreservesDeletionTimestamp(t *testing.T) {
 		t.Errorf("got stored container %+v, want unchanged %+v", stored, container)
 	}
 
-	if enqueuedName != container.Name {
-		t.Errorf("enqueued %q, want %q", enqueuedName, container.Name)
+	if enqueued {
+		t.Errorf("container already set for deletion enqueued")
 	}
 	if clock.calls != 0 {
 		t.Errorf("clock called %d times, want 0", clock.calls)

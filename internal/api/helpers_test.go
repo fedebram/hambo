@@ -114,6 +114,14 @@ func (s failingService) Get(string) (container.Container, error) {
 	return container.Container{}, s.err
 }
 
+func (s failingService) Start(string) (container.Container, error) {
+	return container.Container{}, s.err
+}
+
+func (s failingService) Stop(string) (container.Container, error) {
+	return container.Container{}, s.err
+}
+
 func (s failingService) Delete(string) (container.Container, error) {
 	return container.Container{}, s.err
 }

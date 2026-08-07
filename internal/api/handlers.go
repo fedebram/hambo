@@ -88,6 +88,48 @@ func (srv *server) getContainerHandler(w http.ResponseWriter, r *http.Request) {
 	srv.writeJSON(w, http.StatusOK, c)
 }
 
+func (srv *server) startContainerHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	c, err := srv.service.Start(name)
+	if errors.Is(err, container.ErrNotFound) {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, container.ErrOperationNotAllowed) {
+		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
+		return
+	}
+	if err != nil {
+		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	srv.writeJSON(w, http.StatusAccepted, c)
+}
+
+func (srv *server) stopContainerHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	c, err := srv.service.Stop(name)
+	if errors.Is(err, container.ErrNotFound) {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, container.ErrOperationNotAllowed) {
+		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
+		return
+	}
+	if err != nil {
+		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	srv.writeJSON(w, http.StatusAccepted, c)
+}
+
 func (srv *server) deleteContainerHandler(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 

@@ -15,6 +15,9 @@ type State string
 const (
 	StateCreating State = "creating"
 	StateCreated  State = "created"
+	StateStarting State = "starting"
 	StateRunning  State = "running"
+	StateStopping State = "stopping"
+	StateStopped  State = "stopped"
 	StateDeleting State = "deleting"
 )
