@@ -3,7 +3,7 @@ package container
 import "errors"
 
 var (
-	ErrNotFound            = errors.New("container not found")
-	ErrAlreadyExists       = errors.New("container already exists")
-	ErrOperationNotAllowed = errors.New("container operation not allowed")
+	ErrNotFound            = errors.New("not found")
+	ErrAlreadyExists       = errors.New("already exists")
+	ErrOperationNotAllowed = errors.New("operation not allowed")
 )

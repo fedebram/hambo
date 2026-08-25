@@ -1,6 +1,7 @@
 package container
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -47,7 +48,7 @@ func (w *worker) handle(name string) error {
 }
 
 func (w *worker) handleCreation(container Container) error {
-	if err := w.runtime.CreateContainer(container.Name, container.Image); err != nil {
+	if err := w.runtime.CreateContainer(context.TODO(), container.Name, container.Image); err != nil {
 		return err
 	}
 
@@ -61,11 +62,11 @@ func (w *worker) handleCreation(container Container) error {
 }
 
 func (w *worker) handleStart(container Container) error {
-	if err := w.runtime.CreateTask(container.Name); err != nil {
+	if err := w.runtime.CreateTask(context.TODO(), container.Name); err != nil {
 		return err
 	}
 
-	if err := w.runtime.StartTask(container.Name); err != nil {
+	if err := w.runtime.StartTask(context.TODO(), container.Name); err != nil {
 		return err
 	}
 
@@ -76,11 +77,11 @@ func (w *worker) handleStart(container Container) error {
 }
 
 func (w *worker) handleStop(container Container) error {
-	if err := w.runtime.StopTask(container.Name); err != nil {
+	if err := w.runtime.StopTask(context.TODO(), container.Name); err != nil {
 		return err
 	}
 
-	if err := w.runtime.DeleteTask(container.Name); err != nil {
+	if err := w.runtime.DeleteTask(context.TODO(), container.Name); err != nil {
 		return err
 	}
 
@@ -98,7 +99,7 @@ func (w *worker) handleDeletion(container Container) error {
 		return err
 	}
 
-	if err := w.runtime.DeleteContainer(container.Name); err != nil {
+	if err := w.runtime.DeleteContainer(context.TODO(), container.Name); err != nil {
 		return err
 	}
 

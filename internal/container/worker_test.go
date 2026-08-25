@@ -1,6 +1,7 @@
 package container
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -12,61 +13,61 @@ type failingRuntime struct {
 	err error
 }
 
-func (r failingRuntime) CreateContainer(string, string) error {
+func (r failingRuntime) CreateContainer(context.Context, string, string) error {
 	return r.err
 }
 
-func (r failingRuntime) Inspect(string) (RuntimeContainer, error) {
+func (r failingRuntime) Inspect(context.Context, string) (RuntimeContainer, error) {
 	panic("unexpected call to runtime.Inspect")
 }
 
-func (r failingRuntime) DeleteContainer(string) error {
+func (r failingRuntime) DeleteContainer(context.Context, string) error {
 	panic("unexpected call to runtime.Delete")
 }
 
-func (r failingRuntime) CreateTask(string) error {
+func (r failingRuntime) CreateTask(context.Context, string) error {
 	panic("unexpected call to runtime.CreateTask")
 }
 
-func (r failingRuntime) StartTask(string) error {
+func (r failingRuntime) StartTask(context.Context, string) error {
 	panic("unexpected call to runtime.StartTask")
 }
 
-func (r failingRuntime) StopTask(string) error {
+func (r failingRuntime) StopTask(context.Context, string) error {
 	panic("unexpected call to runtime.StopTask")
 }
 
-func (r failingRuntime) DeleteTask(string) error {
+func (r failingRuntime) DeleteTask(context.Context, string) error {
 	panic("unexpected call to runtime.DeleteTask")
 }
 
 type runtimeDeleteFunc func(id string) error
 
-func (runtimeDeleteFunc) CreateContainer(string, string) error {
+func (runtimeDeleteFunc) CreateContainer(context.Context, string, string) error {
 	panic("unexpected call to runtime.Create")
 }
 
-func (runtimeDeleteFunc) Inspect(string) (RuntimeContainer, error) {
+func (runtimeDeleteFunc) Inspect(context.Context, string) (RuntimeContainer, error) {
 	panic("unexpected call to runtime.Inspect")
 }
 
-func (f runtimeDeleteFunc) DeleteContainer(id string) error {
+func (f runtimeDeleteFunc) DeleteContainer(_ context.Context, id string) error {
 	return f(id)
 }
 
-func (runtimeDeleteFunc) CreateTask(string) error {
+func (runtimeDeleteFunc) CreateTask(context.Context, string) error {
 	panic("unexpected call to runtime.CreateTask")
 }
 
-func (runtimeDeleteFunc) StartTask(string) error {
+func (runtimeDeleteFunc) StartTask(context.Context, string) error {
 	panic("unexpected call to runtime.StartTask")
 }
 
-func (runtimeDeleteFunc) StopTask(string) error {
+func (runtimeDeleteFunc) StopTask(context.Context, string) error {
 	panic("unexpected call to runtime.StopTask")
 }
 
-func (runtimeDeleteFunc) DeleteTask(string) error {
+func (runtimeDeleteFunc) DeleteTask(context.Context, string) error {
 	panic("unexpected call to runtime.DeleteTask")
 }
 
@@ -88,7 +89,7 @@ func TestWorkerHandlesCreatingContainer(t *testing.T) {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
-	gotRuntime, err := runtime.Inspect(container.Name)
+	gotRuntime, err := runtime.Inspect(t.Context(), container.Name)
 	if err != nil {
 		t.Fatalf("unexpected runtime inspect error: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestWorkerHandlesStartingContainer(t *testing.T) {
 	if err := store.Create(container); err != nil {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
-	if err := runtime.CreateContainer(container.Name, container.Image); err != nil {
+	if err := runtime.CreateContainer(t.Context(), container.Name, container.Image); err != nil {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
 
@@ -133,7 +134,7 @@ func TestWorkerHandlesStartingContainer(t *testing.T) {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
-	gotRuntime, err := runtime.Inspect(container.Name)
+	gotRuntime, err := runtime.Inspect(t.Context(), container.Name)
 	if err != nil {
 		t.Fatalf("unexpected runtime inspect error: %v", err)
 	}
@@ -173,13 +174,13 @@ func TestWorkerHandlesStoppingContainer(t *testing.T) {
 	if err := store.Create(container); err != nil {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
-	if err := runtime.CreateContainer(container.Name, container.Image); err != nil {
+	if err := runtime.CreateContainer(t.Context(), container.Name, container.Image); err != nil {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
-	if err := runtime.CreateTask(container.Name); err != nil {
+	if err := runtime.CreateTask(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected task create error: %v", err)
 	}
-	if err := runtime.StartTask(container.Name); err != nil {
+	if err := runtime.StartTask(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected task start error: %v", err)
 	}
 
@@ -188,7 +189,7 @@ func TestWorkerHandlesStoppingContainer(t *testing.T) {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
-	gotRuntime, err := runtime.Inspect(container.Name)
+	gotRuntime, err := runtime.Inspect(t.Context(), container.Name)
 	if err != nil {
 		t.Fatalf("unexpected runtime inspect error: %v", err)
 	}
@@ -226,7 +227,7 @@ func TestWorkerHandlesDeletingContainer(t *testing.T) {
 	if err := store.Create(container); err != nil {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
-	if err := runtime.CreateContainer(container.Name, container.Image); err != nil {
+	if err := runtime.CreateContainer(t.Context(), container.Name, container.Image); err != nil {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
 
@@ -235,7 +236,7 @@ func TestWorkerHandlesDeletingContainer(t *testing.T) {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
-	_, err := runtime.Inspect(container.Name)
+	_, err := runtime.Inspect(t.Context(), container.Name)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got runtime inspect error %v, want %v", err, ErrNotFound)
 	}
@@ -301,7 +302,7 @@ func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 		t.Fatalf("unexpected handle next error: %v", err)
 	}
 
-	gotRuntime, err := runtime.Inspect(container.Name)
+	gotRuntime, err := runtime.Inspect(t.Context(), container.Name)
 	if err != nil {
 		t.Fatalf("unexpected runtime inspect error: %v", err)
 	}
@@ -423,7 +424,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 				t.Fatalf("unexpected store create error: %v", err)
 			}
 			if tt.runtimeExists {
-				if err := runtime.CreateContainer(tt.container.Name, tt.container.Image); err != nil {
+				if err := runtime.CreateContainer(t.Context(), tt.container.Name, tt.container.Image); err != nil {
 					t.Fatalf("unexpected runtime create error: %v", err)
 				}
 			}
@@ -445,7 +446,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			_, err := runtime.Inspect(tt.container.Name)
+			_, err := runtime.Inspect(t.Context(), tt.container.Name)
 			if err != nil && !errors.Is(err, ErrNotFound) {
 				t.Fatalf("unexpected runtime inspect error: %v", err)
 			}
