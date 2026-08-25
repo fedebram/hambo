@@ -5,7 +5,21 @@ import (
 	"errors"
 	"testing"
 	"testing/synctest"
+	"time"
 )
+
+type blockingRuntime struct {
+	failingRuntime
+	started    chan struct{}
+	canceledAt chan time.Time
+}
+
+func (r blockingRuntime) CreateContainer(ctx context.Context, _, _ string) error {
+	close(r.started)
+	<-ctx.Done()
+	r.canceledAt <- time.Now()
+	return ctx.Err()
+}
 
 func TestRunWorkerPoolStopsOnContextCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -22,7 +36,7 @@ func TestRunWorkerPoolStopsOnContextCancellation(t *testing.T) {
 		done := make(chan struct{})
 
 		go func() {
-			runWorkerPool(ctx, 1, worker, func(err error) {
+			runWorkerPool(ctx, time.Second, 1, worker, func(err error) {
 				t.Errorf("unexpected worker error: %v", err)
 			})
 			close(done)
@@ -51,7 +65,7 @@ func TestRunWorkerPoolReportsWorkerErrors(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		wantErr := errors.New("runtime unavailable")
 
-		ctx, cancel := context.WithTimeout(t.Context(), retryDelay/2)
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		container := Container{Name: "hello", State: StateCreating}
@@ -71,9 +85,10 @@ func TestRunWorkerPoolReportsWorkerErrors(t *testing.T) {
 		var gotErr error
 		reportCalls := 0
 
-		runWorkerPool(ctx, 1, worker, func(err error) {
+		runWorkerPool(ctx, time.Second, 1, worker, func(err error) {
 			gotErr = err
 			reportCalls++
+			cancel()
 		})
 
 		if reportCalls != 1 {
@@ -85,23 +100,22 @@ func TestRunWorkerPoolReportsWorkerErrors(t *testing.T) {
 	})
 }
 
-func TestRunWorkerPoolRestartsWorkerAfterError(t *testing.T) {
+func TestRunWorkerPoolContinuesAfterWorkerError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		wantErr := errors.New("runtime unavailable")
 
-		ctx, cancel := context.WithTimeout(
-			t.Context(),
-			retryDelay+retryDelay/2,
-		)
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		container := Container{Name: "hello", State: StateCreating}
 		store := NewMemoryStore()
-		if err := store.Create(container); err != nil {
-			t.Fatalf("unexpected store create error: %v", err)
-		}
 		queue := NewMemoryQueue()
-		queue.Add(container.Name)
+		for _, name := range []string{"hello", "database"} {
+			container := Container{Name: name, State: StateCreating}
+			if err := store.Create(container); err != nil {
+				t.Fatalf("unexpected store create error: %v", err)
+			}
+			queue.Add(container.Name)
+		}
 
 		worker := newWorker(
 			store,
@@ -111,15 +125,76 @@ func TestRunWorkerPoolRestartsWorkerAfterError(t *testing.T) {
 
 		reportCalls := 0
 
-		runWorkerPool(ctx, 1, worker, func(err error) {
+		runWorkerPool(ctx, time.Second, 1, worker, func(err error) {
 			if !errors.Is(err, wantErr) {
 				t.Errorf("reported error %v, want %v", err, wantErr)
 			}
 			reportCalls++
+			if reportCalls == 2 {
+				cancel()
+			}
 		})
 
 		if reportCalls != 2 {
 			t.Fatalf("report calls: %d, want 2", reportCalls)
+		}
+	})
+}
+
+func TestRunWorkerPoolCancelsActiveWorkAfterGracePeriod(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const gracePeriod = time.Second
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		container := Container{Name: "hello", State: StateCreating}
+		store := NewMemoryStore()
+		if err := store.Create(container); err != nil {
+			t.Fatalf("unexpected store create error: %v", err)
+		}
+
+		queue := NewMemoryQueue()
+		queue.Add(container.Name)
+
+		runtime := blockingRuntime{
+			started:    make(chan struct{}),
+			canceledAt: make(chan time.Time, 1),
+		}
+		worker := newWorker(store, runtime, queue)
+
+		var reportedErr error
+		reportCalls := 0
+		go runWorkerPool(ctx, gracePeriod, 1, worker, func(err error) {
+			reportedErr = err
+			reportCalls++
+		})
+
+		synctest.Wait()
+		select {
+		case <-runtime.started:
+		default:
+			t.Fatal("runtime operation did not start")
+		}
+
+		shutdownStarted := time.Now()
+		cancel()
+		canceledAt := <-runtime.canceledAt
+		if elapsed := canceledAt.Sub(shutdownStarted); elapsed < gracePeriod {
+			t.Fatalf(
+				"runtime context cancelled after %v, want at least %v",
+				elapsed,
+				gracePeriod,
+			)
+		}
+
+		synctest.Wait()
+
+		if reportCalls != 1 {
+			t.Fatalf("report calls: %d, want 1", reportCalls)
+		}
+		if !errors.Is(reportedErr, context.Canceled) {
+			t.Fatalf("reported error %v, want %v", reportedErr, context.Canceled)
 		}
 	})
 }

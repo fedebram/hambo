@@ -3,10 +3,8 @@ package container
 import (
 	"context"
 	"errors"
-	"time"
+	"fmt"
 )
-
-const retryDelay = time.Second
 
 type worker struct {
 	store   Store
@@ -22,7 +20,7 @@ func newWorker(store Store, runtime Runtime, queue Queue) *worker {
 	}
 }
 
-func (w *worker) handle(name string) error {
+func (w *worker) handle(ctx context.Context, name string) error {
 	container, err := w.store.Get(name)
 	if errors.Is(err, ErrNotFound) {
 		return nil
@@ -32,23 +30,23 @@ func (w *worker) handle(name string) error {
 	}
 
 	if !container.DeletionTimestamp.IsZero() {
-		return w.handleDeletion(container)
+		return w.handleDeletion(ctx, container)
 	}
 
 	switch container.State {
 	case StateCreating:
-		return w.handleCreation(container)
+		return w.handleCreation(ctx, container)
 	case StateStarting:
-		return w.handleStart(container)
+		return w.handleStart(ctx, container)
 	case StateStopping:
-		return w.handleStop(container)
+		return w.handleStop(ctx, container)
 	default:
 		return nil
 	}
 }
 
-func (w *worker) handleCreation(container Container) error {
-	if err := w.runtime.CreateContainer(context.TODO(), container.Name, container.Image); err != nil {
+func (w *worker) handleCreation(ctx context.Context, container Container) error {
+	if err := w.runtime.CreateContainer(ctx, container.Name, container.Image); err != nil {
 		return err
 	}
 
@@ -61,12 +59,12 @@ func (w *worker) handleCreation(container Container) error {
 	})
 }
 
-func (w *worker) handleStart(container Container) error {
-	if err := w.runtime.CreateTask(context.TODO(), container.Name); err != nil {
+func (w *worker) handleStart(ctx context.Context, container Container) error {
+	if err := w.runtime.CreateTask(ctx, container.Name); err != nil {
 		return err
 	}
 
-	if err := w.runtime.StartTask(context.TODO(), container.Name); err != nil {
+	if err := w.runtime.StartTask(ctx, container.Name); err != nil {
 		return err
 	}
 
@@ -76,12 +74,12 @@ func (w *worker) handleStart(container Container) error {
 	})
 }
 
-func (w *worker) handleStop(container Container) error {
-	if err := w.runtime.StopTask(context.TODO(), container.Name); err != nil {
+func (w *worker) handleStop(ctx context.Context, container Container) error {
+	if err := w.runtime.StopTask(ctx, container.Name); err != nil {
 		return err
 	}
 
-	if err := w.runtime.DeleteTask(context.TODO(), container.Name); err != nil {
+	if err := w.runtime.DeleteTask(ctx, container.Name); err != nil {
 		return err
 	}
 
@@ -91,7 +89,7 @@ func (w *worker) handleStop(container Container) error {
 	})
 }
 
-func (w *worker) handleDeletion(container Container) error {
+func (w *worker) handleDeletion(ctx context.Context, container Container) error {
 	if err := w.store.Modify(container.Name, func(current *Container) error {
 		current.State = StateDeleting
 		return nil
@@ -99,32 +97,39 @@ func (w *worker) handleDeletion(container Container) error {
 		return err
 	}
 
-	if err := w.runtime.DeleteContainer(context.TODO(), container.Name); err != nil {
+	if err := w.runtime.DeleteContainer(ctx, container.Name); err != nil {
 		return err
 	}
 
 	return w.store.Delete(container.Name)
 }
 
-func (w *worker) handleNext() (shutdown bool, err error) {
+func (w *worker) handleNext(ctx context.Context) (shutdown bool, err error) {
 	name, shutdown := w.queue.Get()
 	if shutdown {
 		return true, nil
 	}
 	defer w.queue.Done(name)
 
-	if err = w.handle(name); err != nil {
-		// fixed delay for now.
-		w.queue.AddAfter(name, retryDelay)
+	if err = w.handle(ctx, name); err != nil {
+		if recordErr := w.store.Modify(name, func(container *Container) error {
+			container.Error = err.Error()
+			return nil
+		}); recordErr != nil {
+			return false, errors.Join(
+				err,
+				fmt.Errorf("record worker error for container %q: %w", name, recordErr),
+			)
+		}
 		return false, err
 	}
 
 	return false, nil
 }
 
-func (w *worker) run() error {
+func (w *worker) run(ctx context.Context) error {
 	for {
-		if shutdown, err := w.handleNext(); err != nil || shutdown {
+		if shutdown, err := w.handleNext(ctx); err != nil || shutdown {
 			return err
 		}
 	}

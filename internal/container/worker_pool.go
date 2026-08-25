@@ -3,20 +3,31 @@ package container
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 func RunWorkerPool(
 	ctx context.Context,
+	gracePeriod time.Duration,
 	count int,
 	store Store,
 	runtime Runtime,
 	queue Queue,
 	reportError func(error),
 ) {
-	runWorkerPool(ctx, count, newWorker(store, runtime, queue), reportError)
+	runWorkerPool(ctx, gracePeriod, count, newWorker(store, runtime, queue), reportError)
 }
 
-func runWorkerPool(ctx context.Context, count int, worker *worker, reportError func(error)) {
+func runWorkerPool(
+	ctx context.Context,
+	gracePeriod time.Duration,
+	count int,
+	worker *worker,
+	reportError func(error),
+) {
+	operationCtx, cancelOperations := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelOperations()
+
 	var workers sync.WaitGroup
 
 	for range count {
@@ -26,7 +37,7 @@ func runWorkerPool(ctx context.Context, count int, worker *worker, reportError f
 			defer workers.Done()
 
 			for {
-				err := worker.run()
+				err := worker.run(operationCtx)
 				if err == nil {
 					return
 				}
@@ -35,6 +46,10 @@ func runWorkerPool(ctx context.Context, count int, worker *worker, reportError f
 				// with the errors returned by the workers.
 				// we can also simply log the errors without the need for the worker to have a logger dependency.
 				reportError(err)
+
+				if operationCtx.Err() != nil {
+					return
+				}
 			}
 		}()
 	}
@@ -42,5 +57,9 @@ func runWorkerPool(ctx context.Context, count int, worker *worker, reportError f
 	<-ctx.Done()
 
 	worker.queue.Shutdown()
+
+	timer := time.AfterFunc(gracePeriod, cancelOperations)
+	defer timer.Stop()
+
 	workers.Wait()
 }

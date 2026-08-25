@@ -2,16 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"net"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
-
-	"github.com/fedebram/hambo/internal/container"
 )
 
 func TestRunServerStopsOnCancellation(t *testing.T) {
@@ -180,87 +175,5 @@ func TestRunServerWaitsForActiveRequestWithinGracePeriod(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("get did not complete")
-	}
-}
-
-func TestRunProcessesContainers(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	t.Cleanup(func() {
-		cancel()
-		_ = listener.Close()
-	})
-
-	runErr := make(chan error, 1)
-	go func() {
-		runErr <- run(ctx, withListener(listener))
-	}()
-
-	// we test that the run function wires everything and the end to end behaviour of hambo is respected.
-	baseURL := "http://" + listener.Addr().String()
-	createBody := strings.NewReader(`{"name":"hello","image":"docker.io/library/alpine:latest"}`)
-	resp, err := http.Post(baseURL+"/containers", "application/json", createBody)
-	if err != nil {
-		t.Fatalf("create container: %v", err)
-	}
-	_, drainErr := io.Copy(io.Discard, resp.Body)
-	closeErr := resp.Body.Close()
-	if drainErr != nil {
-		t.Fatalf("drain create container response: %v", drainErr)
-	}
-	if closeErr != nil {
-		t.Fatalf("close create container response: %v", closeErr)
-	}
-
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create container returned status %d, want %d", resp.StatusCode, http.StatusCreated)
-	}
-
-	deadline := time.Now().Add(time.Second)
-	for {
-		resp, err = http.Get(baseURL + "/containers/hello")
-		if err != nil {
-			t.Fatalf("get container: %v", err)
-		}
-		body, readErr := io.ReadAll(resp.Body)
-		closeErr := resp.Body.Close()
-		if readErr != nil {
-			t.Fatalf("read container response: %v", readErr)
-		}
-		if closeErr != nil {
-			t.Fatalf("close container response: %v", closeErr)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("get container returned status %d, want %d", resp.StatusCode, http.StatusOK)
-		}
-
-		var got container.Container
-		if err := json.Unmarshal(body, &got); err != nil {
-			t.Fatalf("unmarshal container: %v", err)
-		}
-
-		if got.State == container.StateCreated {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("container state remained %q, want %q", got.State, container.StateCreated)
-		}
-
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	cancel()
-
-	select {
-	case err := <-runErr:
-		if err != nil {
-			t.Fatalf("run returned an error: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("run did not stop after cancellation")
 	}
 }

@@ -85,7 +85,7 @@ func TestWorkerHandlesCreatingContainer(t *testing.T) {
 	}
 
 	worker := newWorker(store, runtime, NewMemoryQueue())
-	if err := worker.handle(container.Name); err != nil {
+	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
@@ -130,7 +130,7 @@ func TestWorkerHandlesStartingContainer(t *testing.T) {
 	}
 
 	worker := newWorker(store, runtime, NewMemoryQueue())
-	if err := worker.handle(container.Name); err != nil {
+	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestWorkerHandlesStoppingContainer(t *testing.T) {
 	}
 
 	worker := newWorker(store, runtime, NewMemoryQueue())
-	if err := worker.handle(container.Name); err != nil {
+	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
@@ -232,7 +232,7 @@ func TestWorkerHandlesDeletingContainer(t *testing.T) {
 	}
 
 	worker := newWorker(store, runtime, NewMemoryQueue())
-	if err := worker.handle(container.Name); err != nil {
+	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 
@@ -274,7 +274,7 @@ func TestWorkerMarksContainerDeletingBeforeRuntimeDeletion(t *testing.T) {
 	})
 
 	worker := newWorker(store, runtime, NewMemoryQueue())
-	if err := worker.handle(container.Name); err != nil {
+	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
 	if !deleteCalled {
@@ -298,7 +298,7 @@ func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 	queue := &recordingQueue{next: container.Name}
 
 	worker := newWorker(store, runtime, queue)
-	if _, err := worker.handleNext(); err != nil {
+	if _, err := worker.handleNext(t.Context()); err != nil {
 		t.Fatalf("unexpected handle next error: %v", err)
 	}
 
@@ -333,7 +333,7 @@ func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 	}
 }
 
-func TestWorkerHandleNextReportsRuntimeFailure(t *testing.T) {
+func TestWorkerHandleNextRecordsAndReportsRuntimeFailure(t *testing.T) {
 	wantErr := errors.New("runtime unavailable")
 	store := NewMemoryStore()
 	queue := NewMemoryQueue()
@@ -350,16 +350,19 @@ func TestWorkerHandleNextReportsRuntimeFailure(t *testing.T) {
 	queue.Add(container.Name)
 
 	worker := newWorker(store, failingRuntime{err: wantErr}, queue)
-	if _, err := worker.handleNext(); !errors.Is(err, wantErr) {
+	if _, err := worker.handleNext(t.Context()); !errors.Is(err, wantErr) {
 		t.Fatalf("got error %v, want %v", err, wantErr)
 	}
+
+	want := container
+	want.Error = wantErr.Error()
 
 	got, err := store.Get(container.Name)
 	if err != nil {
 		t.Fatalf("unexpected store get error: %v", err)
 	}
-	if got != container {
-		t.Errorf("got stored container %+v, want unchanged %+v", got, container)
+	if got != want {
+		t.Errorf("got stored container %+v, want %+v", got, want)
 	}
 }
 
@@ -369,7 +372,7 @@ func TestWorkerHandleNextShutdown(t *testing.T) {
 
 	worker := newWorker(NewMemoryStore(), NewMemoryRuntime(), queue)
 
-	shutdown, err := worker.handleNext()
+	shutdown, err := worker.handleNext(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected handle next error: %v", err)
 	}
@@ -389,7 +392,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 		errCh := make(chan error, 1)
 
 		go func() {
-			errCh <- worker.run()
+			errCh <- worker.run(t.Context())
 		}()
 
 		deletionTime := time.Date(2026, time.July, 19, 15, 0, 0, 0, time.UTC)
@@ -498,9 +501,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 	})
 }
 
-func TestWorkerHandleNextRequeuesFailedWorkAfterDelay(t *testing.T) {
-	const wantRetryDelay = time.Second
-
+func TestWorkerHandleNextDoesNotRequeueFailedWork(t *testing.T) {
 	wantErr := errors.New("runtime unavailable")
 	container := Container{Name: "hello", State: StateCreating}
 	store := NewMemoryStore()
@@ -515,7 +516,7 @@ func TestWorkerHandleNextRequeuesFailedWorkAfterDelay(t *testing.T) {
 		queue,
 	)
 
-	shutdown, err := worker.handleNext()
+	shutdown, err := worker.handleNext(t.Context())
 	if shutdown {
 		t.Fatal("got shutdown true, want false")
 	}
@@ -523,18 +524,8 @@ func TestWorkerHandleNextRequeuesFailedWorkAfterDelay(t *testing.T) {
 		t.Fatalf("got error %v, want %v", err, wantErr)
 	}
 
-	// this is a "mechanical" test. we want the worker to just call queue AddAfter if there is an error.
-	// And that Done is called after processing.
-	if queue.addAfterCalls != 1 {
-		t.Fatalf("add after calls: %d, want 1", queue.addAfterCalls)
-	}
-
-	if queue.addAfterName != "hello" {
-		t.Fatalf("added name %q, want %q", queue.addAfterName, "hello")
-	}
-
-	if queue.addAfterDelay != wantRetryDelay {
-		t.Fatalf("add after delay: %v, want %v", queue.addAfterDelay, wantRetryDelay)
+	if queue.addAfterCalls != 0 {
+		t.Fatalf("add after calls: %d, want 0", queue.addAfterCalls)
 	}
 
 	if queue.doneCalls != 1 {
