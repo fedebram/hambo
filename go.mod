@@ -8,7 +8,6 @@ require (
 	github.com/containerd/go-cni v1.1.13
 	github.com/containernetworking/cni v1.3.0
 	github.com/containernetworking/plugins v1.9.1
-	go.etcd.io/bbolt v1.4.3
 )
 
 require (

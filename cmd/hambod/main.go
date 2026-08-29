@@ -14,6 +14,7 @@ import (
 
 	containerdclient "github.com/containerd/containerd/v2/client"
 	"github.com/fedebram/hambo/internal/api"
+	cninetwork "github.com/fedebram/hambo/internal/cni"
 	"github.com/fedebram/hambo/internal/container"
 	containerdruntime "github.com/fedebram/hambo/internal/containerd"
 )
@@ -22,6 +23,8 @@ const (
 	defaultAddress             = "127.0.0.1:8080"
 	defaultContainerdAddress   = "/run/containerd/containerd.sock"
 	defaultContainerdNamespace = "hambo"
+	defaultCNIPluginDir        = "/opt/cni/bin"
+	defaultCNIPluginConfDir    = "/var/lib/hambo/cni"
 	workerCount                = 1
 	shutdownGracePeriod        = 5 * time.Second
 	containerdConnectTimeout   = 5 * time.Second
@@ -118,6 +121,15 @@ func run(ctx context.Context, options ...runOption) (runErr error) {
 		return fmt.Errorf("connect to containerd: %w", err)
 	}
 
+	if err := cninetwork.EnsureDefaultConfig(defaultCNIPluginConfDir); err != nil {
+		return fmt.Errorf("ensure default CNI configuration: %w", err)
+	}
+
+	netAttacher, err := cninetwork.NewAttacher(defaultCNIPluginDir, defaultCNIPluginConfDir)
+	if err != nil {
+		return fmt.Errorf("initialize container networking: %w", err)
+	}
+
 	listener := cfg.listener
 	if listener == nil {
 		var err error
@@ -137,7 +149,7 @@ func run(ctx context.Context, options ...runOption) (runErr error) {
 	workersDone := make(chan struct{})
 	go func() {
 		defer close(workersDone)
-		container.RunWorkerPool(workerCtx, shutdownGracePeriod, workerCount, store, runtime, queue, func(err error) {
+		container.RunWorkerPool(workerCtx, shutdownGracePeriod, workerCount, store, runtime, netAttacher, queue, func(err error) {
 			slog.Error("container worker failed", "error", err)
 		})
 	}()

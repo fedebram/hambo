@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"reflect"
 	"testing"
 	"testing/synctest"
@@ -11,6 +12,42 @@ import (
 
 type failingRuntime struct {
 	err error
+}
+
+type networkAttacherFuncs struct {
+	attach func(context.Context, string, string) (NetworkAttachment, error)
+	detach func(context.Context, string, string) error
+}
+
+func (f networkAttacherFuncs) Attach(
+	ctx context.Context,
+	containerID string,
+	netNSPath string,
+) (NetworkAttachment, error) {
+	if f.attach == nil {
+		return NetworkAttachment{}, nil
+	}
+	return f.attach(ctx, containerID, netNSPath)
+}
+
+func (f networkAttacherFuncs) Detach(
+	ctx context.Context,
+	containerID string,
+	netNSPath string,
+) error {
+	if f.detach == nil {
+		return nil
+	}
+	return f.detach(ctx, containerID, netNSPath)
+}
+
+type startFailingRuntime struct {
+	Runtime
+	err error
+}
+
+func (r startFailingRuntime) StartTask(context.Context, string) error {
+	return r.err
 }
 
 func (r failingRuntime) CreateContainer(context.Context, string, string) error {
@@ -25,7 +62,7 @@ func (r failingRuntime) DeleteContainer(context.Context, string) error {
 	panic("unexpected call to runtime.Delete")
 }
 
-func (r failingRuntime) CreateTask(context.Context, string) error {
+func (r failingRuntime) CreateTask(context.Context, string) (RuntimeTask, error) {
 	panic("unexpected call to runtime.CreateTask")
 }
 
@@ -55,7 +92,7 @@ func (f runtimeDeleteFunc) DeleteContainer(_ context.Context, id string) error {
 	return f(id)
 }
 
-func (runtimeDeleteFunc) CreateTask(context.Context, string) error {
+func (runtimeDeleteFunc) CreateTask(context.Context, string) (RuntimeTask, error) {
 	panic("unexpected call to runtime.CreateTask")
 }
 
@@ -84,7 +121,13 @@ func TestWorkerHandlesCreatingContainer(t *testing.T) {
 		t.Fatalf("unexpected store create error: %v", err)
 	}
 
-	worker := newWorker(store, runtime, NewMemoryQueue())
+	network := networkAttacherFuncs{
+		attach: func(context.Context, string, string) (NetworkAttachment, error) {
+			t.Fatal("network attached while creating container")
+			return NetworkAttachment{}, nil
+		},
+	}
+	worker := newWorker(store, runtime, network, NewMemoryQueue())
 	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
@@ -113,6 +156,82 @@ func TestWorkerHandlesCreatingContainer(t *testing.T) {
 	}
 }
 
+func TestWorkerSetsUpNetworkBeforeStartingTask(t *testing.T) {
+	store := NewMemoryStore()
+	runtime := NewMemoryRuntime()
+
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateStarting,
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+	if err := runtime.CreateContainer(t.Context(), container.Name, container.Image); err != nil {
+		t.Fatalf("unexpected runtime create error: %v", err)
+	}
+
+	wantNetwork := NetworkAttachment{
+		IP: netip.MustParseAddr("10.0.1.2"),
+	}
+
+	attachCalled := false
+	network := networkAttacherFuncs{attach: func(ctx context.Context, containerID, netNSPath string) (NetworkAttachment, error) {
+		attachCalled = true
+		if containerID != container.Name {
+			t.Fatalf("got container ID %q, want %q", containerID, container.Name)
+		}
+
+		gotRuntime, err := runtime.Inspect(ctx, containerID)
+		if err != nil {
+			t.Fatalf("unexpected runtime inspect error during network setup: %v", err)
+		}
+		if gotRuntime.Task == nil {
+			t.Fatal("got nil runtime task during network setup, want created task")
+		}
+		if gotRuntime.Task.State != TaskStateCreated {
+			t.Fatalf(
+				"got task state %q during network setup, want %q",
+				gotRuntime.Task.State,
+				TaskStateCreated,
+			)
+		}
+		if netNSPath == "" {
+			t.Fatal("got empty network namespace path")
+		}
+		if netNSPath != gotRuntime.Task.NetNSPath {
+			t.Errorf(
+				"got network namespace path %q, want task path %q",
+				netNSPath,
+				gotRuntime.Task.NetNSPath,
+			)
+		}
+		return wantNetwork, nil
+	}}
+
+	worker := newWorker(store, runtime, network, NewMemoryQueue())
+	if err := worker.handle(t.Context(), container.Name); err != nil {
+		t.Fatalf("unexpected handle error: %v", err)
+	}
+	if !attachCalled {
+		t.Fatal("network attach was not called")
+	}
+
+	got, err := store.Get(container.Name)
+	if err != nil {
+		t.Fatalf("unexpected store get error: %v", err)
+	}
+
+	want := container
+	want.State = StateRunning
+	want.Network = wantNetwork
+
+	if got != want {
+		t.Errorf("got stored container %+v, want %+v", got, want)
+	}
+}
+
 func TestWorkerHandlesStartingContainer(t *testing.T) {
 	store := NewMemoryStore()
 	runtime := NewMemoryRuntime()
@@ -129,7 +248,7 @@ func TestWorkerHandlesStartingContainer(t *testing.T) {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
 
-	worker := newWorker(store, runtime, NewMemoryQueue())
+	worker := newWorker(store, runtime, networkAttacherFuncs{}, NewMemoryQueue())
 	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
@@ -138,17 +257,17 @@ func TestWorkerHandlesStartingContainer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected runtime inspect error: %v", err)
 	}
-	wantRuntime := RuntimeContainer{
-		ID:    container.Name,
-		Image: container.Image,
-		Task: &RuntimeTask{
-			State: TaskStateRunning,
-		},
+	if gotRuntime.ID != container.Name {
+		t.Errorf("got runtime container ID %q, want %q", gotRuntime.ID, container.Name)
 	}
-	if !reflect.DeepEqual(gotRuntime, wantRuntime) {
-		// task is a pointer... it prints the pointer address...
-		// TODO: a better way to print and compare. google/go-cmp package?
-		t.Errorf("got runtime container %+v, want %+v", gotRuntime, wantRuntime)
+	if gotRuntime.Image != container.Image {
+		t.Errorf("got runtime image %q, want %q", gotRuntime.Image, container.Image)
+	}
+	if gotRuntime.Task == nil {
+		t.Fatal("got nil runtime task, want running task")
+	}
+	if gotRuntime.Task.State != TaskStateRunning {
+		t.Errorf("got runtime task state %q, want %q", gotRuntime.Task.State, TaskStateRunning)
 	}
 
 	got, err := store.Get(container.Name)
@@ -162,6 +281,127 @@ func TestWorkerHandlesStartingContainer(t *testing.T) {
 	}
 }
 
+func TestWorkerCleansUpTaskWhenNetworkAttachFails(t *testing.T) {
+	wantErr := errors.New("attach network")
+	store := NewMemoryStore()
+	runtime := NewMemoryRuntime()
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateStarting,
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+	if err := runtime.CreateContainer(t.Context(), container.Name, container.Image); err != nil {
+		t.Fatalf("unexpected runtime create error: %v", err)
+	}
+
+	var attachedNetNSPath string
+	detachCalled := false
+	network := networkAttacherFuncs{
+		attach: func(_ context.Context, containerID, netNSPath string) (NetworkAttachment, error) {
+			if containerID != container.Name {
+				t.Errorf("got container ID %q, want %q", containerID, container.Name)
+			}
+			attachedNetNSPath = netNSPath
+			return NetworkAttachment{}, wantErr
+		},
+		detach: func(ctx context.Context, containerID, netNSPath string) error {
+			detachCalled = true
+			if containerID != container.Name {
+				t.Errorf("got container ID %q, want %q", containerID, container.Name)
+			}
+			if netNSPath == "" || netNSPath != attachedNetNSPath {
+				t.Errorf("got network namespace path %q, want %q", netNSPath, attachedNetNSPath)
+			}
+
+			gotRuntime, err := runtime.Inspect(ctx, containerID)
+			if err != nil {
+				t.Fatalf("inspect runtime during detach: %v", err)
+			}
+			if gotRuntime.Task == nil || gotRuntime.Task.State != TaskStateCreated {
+				t.Fatalf("got task %+v during detach, want created task", gotRuntime.Task)
+			}
+			return nil
+		},
+	}
+	worker := newWorker(store, runtime, network, NewMemoryQueue())
+
+	if err := worker.handle(t.Context(), container.Name); !errors.Is(err, wantErr) {
+		t.Fatalf("got handle error %v, want %v", err, wantErr)
+	}
+	if !detachCalled {
+		t.Fatal("network detach was not called")
+	}
+
+	gotRuntime, err := runtime.Inspect(t.Context(), container.Name)
+	if err != nil {
+		t.Fatalf("unexpected runtime inspect error: %v", err)
+	}
+	if gotRuntime.Task != nil {
+		t.Fatalf("got runtime task %+v, want nil after cleanup", gotRuntime.Task)
+	}
+}
+
+func TestWorkerCleansUpNetworkAndTaskWhenTaskStartFails(t *testing.T) {
+	wantErr := errors.New("start task")
+	store := NewMemoryStore()
+	memoryRuntime := NewMemoryRuntime()
+	runtime := startFailingRuntime{Runtime: memoryRuntime, err: wantErr}
+	container := Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: StateStarting,
+	}
+	if err := store.Create(container); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+	if err := runtime.CreateContainer(t.Context(), container.Name, container.Image); err != nil {
+		t.Fatalf("unexpected runtime create error: %v", err)
+	}
+
+	var attachedNetNSPath string
+	detachCalled := false
+	network := networkAttacherFuncs{
+		attach: func(_ context.Context, _ string, netNSPath string) (NetworkAttachment, error) {
+			attachedNetNSPath = netNSPath
+			return NetworkAttachment{IP: netip.MustParseAddr("10.0.1.2")}, nil
+		},
+		detach: func(ctx context.Context, containerID, netNSPath string) error {
+			detachCalled = true
+			if netNSPath == "" || netNSPath != attachedNetNSPath {
+				t.Errorf("got network namespace path %q, want %q", netNSPath, attachedNetNSPath)
+			}
+
+			gotRuntime, err := runtime.Inspect(ctx, containerID)
+			if err != nil {
+				t.Fatalf("inspect runtime during detach: %v", err)
+			}
+			if gotRuntime.Task == nil || gotRuntime.Task.State != TaskStateCreated {
+				t.Fatalf("got task %+v during detach, want created task", gotRuntime.Task)
+			}
+			return nil
+		},
+	}
+	worker := newWorker(store, runtime, network, NewMemoryQueue())
+
+	if err := worker.handle(t.Context(), container.Name); !errors.Is(err, wantErr) {
+		t.Fatalf("got handle error %v, want %v", err, wantErr)
+	}
+	if !detachCalled {
+		t.Fatal("network detach was not called")
+	}
+
+	gotRuntime, err := runtime.Inspect(t.Context(), container.Name)
+	if err != nil {
+		t.Fatalf("unexpected runtime inspect error: %v", err)
+	}
+	if gotRuntime.Task != nil {
+		t.Fatalf("got runtime task %+v, want nil after cleanup", gotRuntime.Task)
+	}
+}
+
 func TestWorkerHandlesStoppingContainer(t *testing.T) {
 	store := NewMemoryStore()
 	runtime := NewMemoryRuntime()
@@ -170,6 +410,9 @@ func TestWorkerHandlesStoppingContainer(t *testing.T) {
 		Name:  "hello",
 		Image: "docker.io/library/alpine:latest",
 		State: StateStopping,
+		Network: NetworkAttachment{
+			IP: netip.MustParseAddr("10.0.1.2"),
+		},
 	}
 	if err := store.Create(container); err != nil {
 		t.Fatalf("unexpected store create error: %v", err)
@@ -177,16 +420,41 @@ func TestWorkerHandlesStoppingContainer(t *testing.T) {
 	if err := runtime.CreateContainer(t.Context(), container.Name, container.Image); err != nil {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
-	if err := runtime.CreateTask(t.Context(), container.Name); err != nil {
+	if _, err := runtime.CreateTask(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected task create error: %v", err)
 	}
 	if err := runtime.StartTask(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected task start error: %v", err)
 	}
 
-	worker := newWorker(store, runtime, NewMemoryQueue())
+	detachCalled := false
+	network := networkAttacherFuncs{detach: func(ctx context.Context, containerID, netNSPath string) error {
+		detachCalled = true
+		if containerID != container.Name {
+			t.Errorf("got container ID %q, want %q", containerID, container.Name)
+		}
+		if netNSPath != "" {
+			t.Errorf("got network namespace path %q, want empty path", netNSPath)
+		}
+
+		gotRuntime, err := runtime.Inspect(ctx, containerID)
+		if err != nil {
+			t.Fatalf("inspect runtime during detach: %v", err)
+		}
+		if gotRuntime.Task == nil {
+			t.Fatal("task deleted before network detach")
+		}
+		if gotRuntime.Task.State != TaskStateStopped {
+			t.Errorf("got task state %q during detach, want %q", gotRuntime.Task.State, TaskStateStopped)
+		}
+		return nil
+	}}
+	worker := newWorker(store, runtime, network, NewMemoryQueue())
 	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
+	}
+	if !detachCalled {
+		t.Fatal("network detach was not called")
 	}
 
 	gotRuntime, err := runtime.Inspect(t.Context(), container.Name)
@@ -207,6 +475,7 @@ func TestWorkerHandlesStoppingContainer(t *testing.T) {
 	}
 	want := container
 	want.State = StateStopped
+	want.Network = NetworkAttachment{}
 	if got != want {
 		t.Errorf("got stored container %+v, want %+v", got, want)
 	}
@@ -231,7 +500,7 @@ func TestWorkerHandlesDeletingContainer(t *testing.T) {
 		t.Fatalf("unexpected runtime create error: %v", err)
 	}
 
-	worker := newWorker(store, runtime, NewMemoryQueue())
+	worker := newWorker(store, runtime, networkAttacherFuncs{}, NewMemoryQueue())
 	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
@@ -273,7 +542,7 @@ func TestWorkerMarksContainerDeletingBeforeRuntimeDeletion(t *testing.T) {
 		return nil
 	})
 
-	worker := newWorker(store, runtime, NewMemoryQueue())
+	worker := newWorker(store, runtime, networkAttacherFuncs{}, NewMemoryQueue())
 	if err := worker.handle(t.Context(), container.Name); err != nil {
 		t.Fatalf("unexpected handle error: %v", err)
 	}
@@ -297,7 +566,7 @@ func TestWorkerHandlesNextQueuedContainer(t *testing.T) {
 
 	queue := &recordingQueue{next: container.Name}
 
-	worker := newWorker(store, runtime, queue)
+	worker := newWorker(store, runtime, networkAttacherFuncs{}, queue)
 	if _, err := worker.handleNext(t.Context()); err != nil {
 		t.Fatalf("unexpected handle next error: %v", err)
 	}
@@ -349,7 +618,7 @@ func TestWorkerHandleNextRecordsAndReportsRuntimeFailure(t *testing.T) {
 	}
 	queue.Add(container.Name)
 
-	worker := newWorker(store, failingRuntime{err: wantErr}, queue)
+	worker := newWorker(store, failingRuntime{err: wantErr}, networkAttacherFuncs{}, queue)
 	if _, err := worker.handleNext(t.Context()); !errors.Is(err, wantErr) {
 		t.Fatalf("got error %v, want %v", err, wantErr)
 	}
@@ -370,7 +639,7 @@ func TestWorkerHandleNextShutdown(t *testing.T) {
 	queue := NewMemoryQueue()
 	queue.Shutdown()
 
-	worker := newWorker(NewMemoryStore(), NewMemoryRuntime(), queue)
+	worker := newWorker(NewMemoryStore(), NewMemoryRuntime(), networkAttacherFuncs{}, queue)
 
 	shutdown, err := worker.handleNext(t.Context())
 	if err != nil {
@@ -387,7 +656,7 @@ func TestWorkerRunHandlesQueuedContainers(t *testing.T) {
 		runtime := NewMemoryRuntime()
 		queue := NewMemoryQueue()
 
-		worker := newWorker(store, runtime, queue)
+		worker := newWorker(store, runtime, networkAttacherFuncs{}, queue)
 
 		errCh := make(chan error, 1)
 
@@ -513,6 +782,7 @@ func TestWorkerHandleNextDoesNotRequeueFailedWork(t *testing.T) {
 	worker := newWorker(
 		store,
 		failingRuntime{err: wantErr},
+		networkAttacherFuncs{},
 		queue,
 	)
 

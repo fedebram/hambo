@@ -7,16 +7,18 @@ import (
 )
 
 type worker struct {
-	store   Store
-	runtime Runtime
-	queue   Queue
+	store       Store
+	runtime     Runtime
+	netAttacher NetworkAttacher
+	queue       Queue
 }
 
-func newWorker(store Store, runtime Runtime, queue Queue) *worker {
+func newWorker(store Store, runtime Runtime, netAttacher NetworkAttacher, queue Queue) *worker {
 	return &worker{
-		store:   store,
-		runtime: runtime,
-		queue:   queue,
+		store:       store,
+		runtime:     runtime,
+		netAttacher: netAttacher,
+		queue:       queue,
 	}
 }
 
@@ -60,16 +62,31 @@ func (w *worker) handleCreation(ctx context.Context, container Container) error 
 }
 
 func (w *worker) handleStart(ctx context.Context, container Container) error {
-	if err := w.runtime.CreateTask(ctx, container.Name); err != nil {
+	task, err := w.runtime.CreateTask(ctx, container.Name)
+	if err != nil {
 		return err
 	}
 
+	network, err := w.netAttacher.Attach(ctx, container.Name, task.NetNSPath)
+	if err != nil {
+		return errors.Join(
+			err,
+			w.netAttacher.Detach(ctx, container.Name, task.NetNSPath),
+			w.runtime.DeleteTask(ctx, container.Name),
+		)
+	}
+
 	if err := w.runtime.StartTask(ctx, container.Name); err != nil {
-		return err
+		return errors.Join(
+			err,
+			w.netAttacher.Detach(ctx, container.Name, task.NetNSPath),
+			w.runtime.DeleteTask(ctx, container.Name),
+		)
 	}
 
 	return w.store.Modify(container.Name, func(current *Container) error {
 		current.State = StateRunning
+		current.Network = network
 		return nil
 	})
 }
@@ -79,12 +96,17 @@ func (w *worker) handleStop(ctx context.Context, container Container) error {
 		return err
 	}
 
+	if err := w.netAttacher.Detach(ctx, container.Name, ""); err != nil {
+		return err
+	}
+
 	if err := w.runtime.DeleteTask(ctx, container.Name); err != nil {
 		return err
 	}
 
 	return w.store.Modify(container.Name, func(current *Container) error {
 		current.State = StateStopped
+		current.Network = NetworkAttachment{}
 		return nil
 	})
 }

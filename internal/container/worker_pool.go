@@ -12,10 +12,11 @@ func RunWorkerPool(
 	count int,
 	store Store,
 	runtime Runtime,
+	netAttacher NetworkAttacher,
 	queue Queue,
 	reportError func(error),
 ) {
-	runWorkerPool(ctx, gracePeriod, count, newWorker(store, runtime, queue), reportError)
+	runWorkerPool(ctx, gracePeriod, count, newWorker(store, runtime, netAttacher, queue), reportError)
 }
 
 func runWorkerPool(

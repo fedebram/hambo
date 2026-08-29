@@ -9,11 +9,13 @@ import (
 type MemoryRuntime struct {
 	mu         sync.Mutex
 	containers map[string]RuntimeContainer
+	nextPID    uint32
 }
 
 func NewMemoryRuntime() *MemoryRuntime {
 	return &MemoryRuntime{
 		containers: make(map[string]RuntimeContainer),
+		nextPID:    1,
 	}
 }
 
@@ -77,29 +79,36 @@ func (r *MemoryRuntime) DeleteContainer(_ context.Context, id string) error {
 	return nil
 }
 
-func (r *MemoryRuntime) CreateTask(_ context.Context, containerID string) error {
+func (r *MemoryRuntime) CreateTask(_ context.Context, containerID string) (RuntimeTask, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	c, found := r.containers[containerID]
 	if !found {
-		return fmt.Errorf(
+		return RuntimeTask{}, fmt.Errorf(
 			"create task for runtime container %q: container %w",
 			containerID,
 			ErrNotFound,
 		)
 	}
 	if c.Task != nil {
-		return fmt.Errorf(
+		return RuntimeTask{}, fmt.Errorf(
 			"create task for runtime container %q: task %w",
 			containerID,
 			ErrAlreadyExists,
 		)
 	}
 
-	c.Task = &RuntimeTask{State: TaskStateCreated}
+	pid := r.nextPID
+	r.nextPID++
+	task := RuntimeTask{
+		PID:       pid,
+		NetNSPath: fmt.Sprintf("/memory-runtime/%d/ns/net", pid),
+		State:     TaskStateCreated,
+	}
+	c.Task = &task
 	r.containers[containerID] = c
-	return nil
+	return task, nil
 }
 
 func (r *MemoryRuntime) StartTask(_ context.Context, containerID string) error {
@@ -160,6 +169,8 @@ func (r *MemoryRuntime) StopTask(_ context.Context, containerID string) error {
 
 	switch c.Task.State {
 	case TaskStateRunning:
+		c.Task.PID = 0
+		c.Task.NetNSPath = ""
 		c.Task.State = TaskStateStopped
 		return nil
 	case TaskStateStopped:

@@ -85,12 +85,18 @@ func (r *Runtime) Inspect(ctx context.Context, id string) (container.RuntimeCont
 
 	switch processStatus {
 	case client.Created:
+		pid := t.Pid()
 		rc.Task = &container.RuntimeTask{
-			State: container.TaskStateCreated,
+			PID:       pid,
+			NetNSPath: networkNamespacePath(pid),
+			State:     container.TaskStateCreated,
 		}
 	case client.Running:
+		pid := t.Pid()
 		rc.Task = &container.RuntimeTask{
-			State: container.TaskStateRunning,
+			PID:       pid,
+			NetNSPath: networkNamespacePath(pid),
+			State:     container.TaskStateRunning,
 		}
 	case client.Stopped:
 		rc.Task = &container.RuntimeTask{
@@ -194,17 +200,17 @@ func (r *Runtime) DeleteContainer(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *Runtime) CreateTask(ctx context.Context, containerID string) error {
+func (r *Runtime) CreateTask(ctx context.Context, containerID string) (container.RuntimeTask, error) {
 	c, err := r.client.LoadContainer(ctx, containerID)
 	if errdefs.IsNotFound(err) {
-		return fmt.Errorf(
+		return container.RuntimeTask{}, fmt.Errorf(
 			"create task for runtime container %q: container %w",
 			containerID,
 			container.ErrNotFound,
 		)
 	}
 	if err != nil {
-		return fmt.Errorf(
+		return container.RuntimeTask{}, fmt.Errorf(
 			"create task for runtime container %q: load container from containerd: %w",
 			containerID,
 			err,
@@ -214,36 +220,48 @@ func (r *Runtime) CreateTask(ctx context.Context, containerID string) error {
 	_, err = c.Task(ctx, nil)
 	switch {
 	case err == nil:
-		return fmt.Errorf(
+		return container.RuntimeTask{}, fmt.Errorf(
 			"create task for runtime container %q: task %w",
 			containerID,
 			container.ErrAlreadyExists,
 		)
 	case !errdefs.IsNotFound(err):
-		return fmt.Errorf(
+		return container.RuntimeTask{}, fmt.Errorf(
 			"create task for runtime container %q: check for existing containerd task: %w",
 			containerID,
 			err,
 		)
 	}
 
-	_, err = c.NewTask(ctx, cio.NullIO)
+	task, err := c.NewTask(ctx, cio.NullIO)
 	if errdefs.IsAlreadyExists(err) {
-		return fmt.Errorf(
+		return container.RuntimeTask{}, fmt.Errorf(
 			"create task for runtime container %q: task %w",
 			containerID,
 			container.ErrAlreadyExists,
 		)
 	}
 	if err != nil {
-		return fmt.Errorf(
+		return container.RuntimeTask{}, fmt.Errorf(
 			"create task for runtime container %q: create containerd task: %w",
 			containerID,
 			err,
 		)
 	}
 
-	return nil
+	pid := task.Pid()
+	return container.RuntimeTask{
+		PID:       pid,
+		NetNSPath: networkNamespacePath(pid),
+		State:     container.TaskStateCreated,
+	}, nil
+}
+
+func networkNamespacePath(pid uint32) string {
+	if pid == 0 {
+		return ""
+	}
+	return fmt.Sprintf("/proc/%d/ns/net", pid)
 }
 
 func (r *Runtime) StartTask(ctx context.Context, containerID string) error {

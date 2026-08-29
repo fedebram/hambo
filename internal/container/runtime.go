@@ -8,7 +8,7 @@ type Runtime interface {
 	Inspect(ctx context.Context, id string) (RuntimeContainer, error)
 	CreateContainer(ctx context.Context, id, image string) error
 	DeleteContainer(ctx context.Context, id string) error
-	CreateTask(ctx context.Context, containerID string) error
+	CreateTask(ctx context.Context, containerID string) (RuntimeTask, error)
 	StartTask(ctx context.Context, containerID string) error
 	StopTask(ctx context.Context, containerID string) error
 	DeleteTask(ctx context.Context, containerID string) error
@@ -21,7 +21,9 @@ type RuntimeContainer struct {
 }
 
 type RuntimeTask struct {
-	State TaskState
+	PID       uint32
+	NetNSPath string
+	State     TaskState
 }
 
 type TaskState string

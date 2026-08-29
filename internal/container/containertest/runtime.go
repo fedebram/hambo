@@ -163,7 +163,7 @@ func TestRuntime(
 				if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 					t.Fatalf("unexpected create container error: %v", err)
 				}
-				if err := runtime.CreateTask(t.Context(), id); err != nil {
+				if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 					t.Fatalf("unexpected create task error: %v", err)
 				}
 				if tt.prepare != nil {
@@ -180,15 +180,17 @@ func TestRuntime(
 					t.Fatalf("unexpected inspect error: %v", err)
 				}
 
-				want := container.RuntimeContainer{
-					ID:    id,
-					Image: image,
-					Task: &container.RuntimeTask{
-						State: tt.state,
-					},
+				if got.ID != id {
+					t.Errorf("got container ID %q, want unchanged %q", got.ID, id)
 				}
-				if !reflect.DeepEqual(got, want) {
-					t.Errorf("got %+v, want unchanged %+v", got, want)
+				if got.Image != image {
+					t.Errorf("got image %q, want unchanged %q", got.Image, image)
+				}
+				if got.Task == nil {
+					t.Fatal("got nil task, want existing task")
+				}
+				if got.Task.State != tt.state {
+					t.Errorf("got task state %q, want unchanged %q", got.Task.State, tt.state)
 				}
 			})
 		}
@@ -201,8 +203,23 @@ func TestRuntime(
 		if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 			t.Fatalf("unexpected create container error: %v", err)
 		}
-		if err := runtime.CreateTask(t.Context(), id); err != nil {
+		task, err := runtime.CreateTask(t.Context(), id)
+		if err != nil {
 			t.Fatalf("unexpected create task error: %v", err)
+		}
+
+		if task.PID == 0 {
+			t.Error("got PID 0, want nonzero PID")
+		}
+		if task.NetNSPath == "" {
+			t.Error("got empty network namespace path, want nonempty path")
+		}
+		if task.State != container.TaskStateCreated {
+			t.Errorf(
+				"got created task state %q, want %q",
+				task.State,
+				container.TaskStateCreated,
+			)
 		}
 
 		got, err := runtime.Inspect(t.Context(), id)
@@ -214,7 +231,9 @@ func TestRuntime(
 			ID:    id,
 			Image: image,
 			Task: &container.RuntimeTask{
-				State: container.TaskStateCreated,
+				PID:       task.PID,
+				NetNSPath: task.NetNSPath,
+				State:     container.TaskStateCreated,
 			},
 		}
 		if !reflect.DeepEqual(got, want) {
@@ -226,7 +245,7 @@ func TestRuntime(
 		id := newContainerID(t)
 		registerCleanup(t, id)
 
-		err := runtime.CreateTask(t.Context(), id)
+		_, err := runtime.CreateTask(t.Context(), id)
 		if !errors.Is(err, container.ErrNotFound) {
 			t.Fatalf("got error %v, want %v", err, container.ErrNotFound)
 		}
@@ -239,11 +258,11 @@ func TestRuntime(
 		if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 			t.Fatalf("unexpected create container error: %v", err)
 		}
-		if err := runtime.CreateTask(t.Context(), id); err != nil {
+		if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected first create task error: %v", err)
 		}
 
-		err := runtime.CreateTask(t.Context(), id)
+		_, err := runtime.CreateTask(t.Context(), id)
 		if !errors.Is(err, container.ErrAlreadyExists) {
 			t.Fatalf("got error %v, want %v", err, container.ErrAlreadyExists)
 		}
@@ -267,7 +286,7 @@ func TestRuntime(
 		if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 			t.Fatalf("unexpected create container error: %v", err)
 		}
-		if err := runtime.CreateTask(t.Context(), id); err != nil {
+		if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected create task error: %v", err)
 		}
 		if err := runtime.StartTask(t.Context(), id); err != nil {
@@ -307,7 +326,7 @@ func TestRuntime(
 		if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 			t.Fatalf("unexpected create container error: %v", err)
 		}
-		if err := runtime.CreateTask(t.Context(), id); err != nil {
+		if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected create task error: %v", err)
 		}
 		if err := runtime.StartTask(t.Context(), id); err != nil {
@@ -337,7 +356,7 @@ func TestRuntime(
 		if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 			t.Fatalf("unexpected create container error: %v", err)
 		}
-		if err := runtime.CreateTask(t.Context(), id); err != nil {
+		if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected create task error: %v", err)
 		}
 		if err := runtime.StartTask(t.Context(), id); err != nil {
@@ -372,7 +391,7 @@ func TestRuntime(
 		if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 			t.Fatalf("unexpected create container error: %v", err)
 		}
-		if err := runtime.CreateTask(t.Context(), id); err != nil {
+		if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected create task error: %v", err)
 		}
 		if err := runtime.StartTask(t.Context(), id); err != nil {
@@ -426,7 +445,7 @@ func TestRuntime(
 		if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 			t.Fatalf("unexpected create container error: %v", err)
 		}
-		if err := runtime.CreateTask(t.Context(), id); err != nil {
+		if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected create task error: %v", err)
 		}
 
@@ -454,7 +473,7 @@ func TestRuntime(
 		if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 			t.Fatalf("unexpected create container error: %v", err)
 		}
-		if err := runtime.CreateTask(t.Context(), id); err != nil {
+		if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected create task error: %v", err)
 		}
 		if err := runtime.StartTask(t.Context(), id); err != nil {
@@ -510,7 +529,7 @@ func TestRuntime(
 				if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 					t.Fatalf("unexpected create container error: %v", err)
 				}
-				if err := runtime.CreateTask(t.Context(), id); err != nil {
+				if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 					t.Fatalf("unexpected create task error: %v", err)
 				}
 				if tt.prepare != nil {
@@ -544,7 +563,7 @@ func TestRuntime(
 		if err := runtime.CreateContainer(t.Context(), id, image); err != nil {
 			t.Fatalf("unexpected create container error: %v", err)
 		}
-		if err := runtime.CreateTask(t.Context(), id); err != nil {
+		if _, err := runtime.CreateTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected create task error: %v", err)
 		}
 		if err := runtime.StartTask(t.Context(), id); err != nil {

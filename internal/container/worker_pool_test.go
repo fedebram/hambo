@@ -30,6 +30,7 @@ func TestRunWorkerPoolStopsOnContextCancellation(t *testing.T) {
 		worker := newWorker(
 			NewMemoryStore(),
 			NewMemoryRuntime(),
+			networkAttacherFuncs{},
 			queue,
 		)
 
@@ -79,6 +80,7 @@ func TestRunWorkerPoolReportsWorkerErrors(t *testing.T) {
 		worker := newWorker(
 			store,
 			failingRuntime{err: wantErr},
+			networkAttacherFuncs{},
 			queue,
 		)
 
@@ -120,6 +122,7 @@ func TestRunWorkerPoolContinuesAfterWorkerError(t *testing.T) {
 		worker := newWorker(
 			store,
 			failingRuntime{err: wantErr},
+			networkAttacherFuncs{},
 			queue,
 		)
 
@@ -161,7 +164,7 @@ func TestRunWorkerPoolCancelsActiveWorkAfterGracePeriod(t *testing.T) {
 			started:    make(chan struct{}),
 			canceledAt: make(chan time.Time, 1),
 		}
-		worker := newWorker(store, runtime, queue)
+		worker := newWorker(store, runtime, networkAttacherFuncs{}, queue)
 
 		var reportedErr error
 		reportCalls := 0
