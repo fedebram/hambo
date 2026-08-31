@@ -2,6 +2,8 @@ package container
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -191,5 +193,63 @@ func TestMemoryStoreDeleteMissingIsNoOp(t *testing.T) {
 
 	if err := store.Delete("missing"); err != nil {
 		t.Fatalf("unexpected delete error: %v", err)
+	}
+}
+
+func TestMemoryStoreList(t *testing.T) {
+	store := NewMemoryStore()
+
+	cs, err := store.List()
+	if err != nil {
+		t.Fatalf("unexpected list error: %v", err)
+	}
+
+	if len(cs) != 0 {
+		t.Fatalf("expected empty list, got %d containers", len(cs))
+	}
+
+	const count = 100
+	want := make([]Container, count)
+	errCh := make(chan error, count)
+
+	var wg sync.WaitGroup
+	for i := range count {
+		want[i] = Container{
+			Name:  fmt.Sprintf("container-%03d", i),
+			Image: fmt.Sprintf("example.com/image:%d", i),
+			State: StateCreated,
+		}
+
+		wg.Add(1)
+		go func(c Container) {
+			defer wg.Done()
+			if err := store.Create(c); err != nil {
+				errCh <- err
+			}
+		}(want[i])
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatalf("create container: %v", err)
+	}
+
+	cs, err = store.List()
+	if err != nil {
+		t.Fatalf("unexpected list error: %v", err)
+	}
+
+	if len(cs) != len(want) {
+		t.Fatalf("got %d containers, want %d", len(cs), len(want))
+	}
+
+	// this way we check also the ordering
+	for i := range want {
+		if cs[i] != want[i] {
+			// exit early with fatalf
+			t.Fatalf("container %d: got %+v, want %+v", i, cs[i], want[i])
+		}
 	}
 }

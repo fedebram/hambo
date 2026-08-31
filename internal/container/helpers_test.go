@@ -53,6 +53,10 @@ func (s failingStore) Delete(string) error {
 	panic("unexpected call to Store.Delete")
 }
 
+func (s failingStore) List() ([]Container, error) {
+	panic("unexpected call to Store.List")
+}
+
 // recordingQueue records calls to AddAfter and Done
 type recordingQueue struct {
 	next          string
