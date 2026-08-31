@@ -40,6 +40,8 @@ func (w *worker) handle(ctx context.Context, name string) error {
 		return w.handleCreation(ctx, container)
 	case StateStarting:
 		return w.handleStart(ctx, container)
+	case StateRunning:
+		return w.handleRunning(ctx, container)
 	case StateStopping:
 		return w.handleStop(ctx, container)
 	default:
@@ -91,11 +93,63 @@ func (w *worker) handleStart(ctx context.Context, container Container) error {
 	})
 }
 
+func (w *worker) handleRunning(ctx context.Context, container Container) error {
+	runtimeContainer, err := w.runtime.Inspect(ctx, container.Name)
+	if err != nil {
+		return err
+	}
+	if runtimeContainer.Task == nil {
+		return fmt.Errorf(
+			"handle running container %q: runtime task %w",
+			container.Name,
+			ErrNotFound,
+		)
+	}
+
+	switch runtimeContainer.Task.State {
+	case TaskStateRunning:
+		return nil
+	case TaskStateStopped:
+		return w.cleanupStoppedTask(ctx, container, *runtimeContainer.Task)
+	default:
+		return fmt.Errorf(
+			"handle running container %q with runtime task in state %q: %w",
+			container.Name,
+			runtimeContainer.Task.State,
+			ErrOperationNotAllowed,
+		)
+	}
+}
+
 func (w *worker) handleStop(ctx context.Context, container Container) error {
 	if err := w.runtime.StopTask(ctx, container.Name); err != nil {
 		return err
 	}
 
+	runtimeContainer, err := w.runtime.Inspect(ctx, container.Name)
+	if err != nil {
+		return err
+	}
+	if runtimeContainer.Task == nil {
+		return fmt.Errorf(
+			"handle stopping container %q: runtime task %w",
+			container.Name,
+			ErrNotFound,
+		)
+	}
+	if runtimeContainer.Task.State != TaskStateStopped {
+		return fmt.Errorf(
+			"handle stopping container %q with runtime task in state %q: %w",
+			container.Name,
+			runtimeContainer.Task.State,
+			ErrOperationNotAllowed,
+		)
+	}
+
+	return w.cleanupStoppedTask(ctx, container, *runtimeContainer.Task)
+}
+
+func (w *worker) cleanupStoppedTask(ctx context.Context, container Container, task RuntimeTask) error {
 	if err := w.netAttacher.Detach(ctx, container.Name, ""); err != nil {
 		return err
 	}
@@ -107,6 +161,10 @@ func (w *worker) handleStop(ctx context.Context, container Container) error {
 	return w.store.Modify(container.Name, func(current *Container) error {
 		current.State = StateStopped
 		current.Network = NetworkAttachment{}
+		current.Exit = ContainerExit{
+			Code:     task.ExitCode,
+			ExitedAt: task.ExitedAt,
+		}
 		return nil
 	})
 }

@@ -26,6 +26,7 @@ const (
 	defaultCNIPluginDir        = "/opt/cni/bin"
 	defaultCNIPluginConfDir    = "/var/lib/hambo/cni"
 	workerCount                = 1
+	workerListenerRetryDelay   = time.Second
 	shutdownGracePeriod        = 5 * time.Second
 	containerdConnectTimeout   = 5 * time.Second
 )
@@ -153,10 +154,18 @@ func run(ctx context.Context, options ...runOption) (runErr error) {
 			slog.Error("container worker failed", "error", err)
 		})
 	}()
+	workerListenerDone := make(chan struct{})
+	go func() {
+		defer close(workerListenerDone)
+		container.RunWorkerListener(workerCtx, workerListenerRetryDelay, runtime, queue, func(err error) {
+			slog.Error("container worker listener failed", "error", err)
+		})
+	}()
 
 	serverErr := runServer(ctx, listener, handler, shutdownGracePeriod)
 	stopWorkers()
 	<-workersDone
+	<-workerListenerDone
 
 	return serverErr
 }

@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"time"
 )
 
 type Runtime interface {
@@ -24,6 +25,8 @@ type RuntimeTask struct {
 	PID       uint32
 	NetNSPath string
 	State     TaskState
+	ExitCode  uint32
+	ExitedAt  time.Time
 }
 
 type TaskState string

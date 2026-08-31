@@ -4,18 +4,30 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
+const memoryRuntimeTaskExitBufferSize = 10
+
+type memoryRuntimeTaskExitSubscription struct {
+	ctx        context.Context
+	taskExitCh chan RuntimeTaskExit
+	errCh      chan error
+}
+
 type MemoryRuntime struct {
-	mu         sync.Mutex
-	containers map[string]RuntimeContainer
-	nextPID    uint32
+	mu                 sync.Mutex
+	containers         map[string]RuntimeContainer
+	nextPID            uint32
+	nextSubscriptionID uint64
+	subscriptions      map[uint64]memoryRuntimeTaskExitSubscription
 }
 
 func NewMemoryRuntime() *MemoryRuntime {
 	return &MemoryRuntime{
-		containers: make(map[string]RuntimeContainer),
-		nextPID:    1,
+		containers:    make(map[string]RuntimeContainer),
+		nextPID:       1,
+		subscriptions: make(map[uint64]memoryRuntimeTaskExitSubscription),
 	}
 }
 
@@ -169,9 +181,17 @@ func (r *MemoryRuntime) StopTask(_ context.Context, containerID string) error {
 
 	switch c.Task.State {
 	case TaskStateRunning:
+		exitedAt := time.Now().UTC()
 		c.Task.PID = 0
 		c.Task.NetNSPath = ""
 		c.Task.State = TaskStateStopped
+		c.Task.ExitCode = 0
+		c.Task.ExitedAt = exitedAt
+		r.publishTaskExitLocked(RuntimeTaskExit{
+			ContainerID: containerID,
+			ExitCode:    c.Task.ExitCode,
+			ExitedAt:    exitedAt,
+		})
 		return nil
 	case TaskStateStopped:
 		return nil
@@ -211,4 +231,46 @@ func (r *MemoryRuntime) DeleteTask(_ context.Context, containerID string) error 
 	c.Task = nil
 	r.containers[containerID] = c
 	return nil
+}
+
+func (r *MemoryRuntime) SubscribeTaskExit(ctx context.Context) (<-chan RuntimeTaskExit, <-chan error) {
+	taskExitCh := make(chan RuntimeTaskExit, memoryRuntimeTaskExitBufferSize)
+	errCh := make(chan error)
+
+	r.mu.Lock()
+	subscriptionID := r.nextSubscriptionID
+	r.nextSubscriptionID++
+	r.subscriptions[subscriptionID] = memoryRuntimeTaskExitSubscription{
+		ctx:        ctx,
+		taskExitCh: taskExitCh,
+		errCh:      errCh,
+	}
+	r.mu.Unlock()
+
+	go func() {
+		<-ctx.Done()
+
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		subscription, found := r.subscriptions[subscriptionID]
+		if !found {
+			return
+		}
+
+		delete(r.subscriptions, subscriptionID)
+		close(subscription.taskExitCh)
+		close(subscription.errCh)
+	}()
+
+	return taskExitCh, errCh
+}
+
+func (r *MemoryRuntime) publishTaskExitLocked(taskExit RuntimeTaskExit) {
+	for _, subscription := range r.subscriptions {
+		select {
+		case subscription.taskExitCh <- taskExit:
+		case <-subscription.ctx.Done():
+		}
+	}
 }

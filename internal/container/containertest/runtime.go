@@ -2,6 +2,7 @@
 package containertest
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -13,9 +14,14 @@ import (
 // Contract tests. Inspired by https://quii.gitbook.io/learn-go-with-tests/testing-fundamentals/working-without-mocks
 // The Memory Runtime and Containerd Runtime implementation need to adhere to these tests.
 
+type runtimeContract interface {
+	container.Runtime
+	container.RuntimeEventSource
+}
+
 func TestRuntime(
 	t *testing.T,
-	runtime container.Runtime,
+	runtime runtimeContract,
 	image string,
 	differentImage string,
 	newContainerID func(*testing.T) string,
@@ -412,6 +418,9 @@ func TestRuntime(
 		if got.Task.State != container.TaskStateStopped {
 			t.Errorf("got task state %q, want %q", got.Task.State, container.TaskStateStopped)
 		}
+		if got.Task.ExitedAt.IsZero() {
+			t.Error("got stopped task exit time zero")
+		}
 	})
 
 	t.Run("stopping task without container returns not found", func(t *testing.T) {
@@ -483,6 +492,16 @@ func TestRuntime(
 		if err := runtime.StopTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected first stop task error: %v", err)
 		}
+		first, err := runtime.Inspect(t.Context(), id)
+		if err != nil {
+			t.Fatalf("unexpected inspect after first stop error: %v", err)
+		}
+		if first.Task == nil {
+			t.Fatal("got nil task after first stop, want stopped task")
+		}
+		if first.Task.ExitedAt.IsZero() {
+			t.Fatal("got task exit time zero after first stop")
+		}
 
 		if err := runtime.StopTask(t.Context(), id); err != nil {
 			t.Fatalf("unexpected second stop task error: %v", err)
@@ -497,6 +516,12 @@ func TestRuntime(
 		}
 		if got.Task.State != container.TaskStateStopped {
 			t.Errorf("got task state %q, want unchanged %q", got.Task.State, container.TaskStateStopped)
+		}
+		if got.Task.ExitCode != first.Task.ExitCode {
+			t.Errorf("got exit code %d, want unchanged %d", got.Task.ExitCode, first.Task.ExitCode)
+		}
+		if !got.Task.ExitedAt.Equal(first.Task.ExitedAt) {
+			t.Errorf("got exit time %v, want unchanged %v", got.Task.ExitedAt, first.Task.ExitedAt)
 		}
 	})
 
@@ -620,6 +645,75 @@ func TestRuntime(
 		err := runtime.DeleteTask(t.Context(), id)
 		if !errors.Is(err, container.ErrNotFound) {
 			t.Fatalf("got error %v, want %v", err, container.ErrNotFound)
+		}
+	})
+
+	t.Run("subscribe to task exit event", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+
+		id := newContainerID(t)
+		registerCleanup(t, id)
+
+		taskExitCh, errCh := runtime.SubscribeTaskExit(ctx)
+
+		if err := runtime.CreateContainer(ctx, id, image); err != nil {
+			t.Fatalf("unexpected create container error: %v", err)
+		}
+		if _, err := runtime.CreateTask(ctx, id); err != nil {
+			t.Fatalf("unexpected create task error: %v", err)
+		}
+		if err := runtime.StartTask(ctx, id); err != nil {
+			t.Fatalf("unexpected start task error: %v", err)
+		}
+
+		waitAfterStart()
+
+		if err := runtime.StopTask(ctx, id); err != nil {
+			t.Fatalf("unexpected stop task error: %v", err)
+		}
+
+		for {
+			select {
+			case taskExit, ok := <-taskExitCh:
+				if !ok {
+					t.Fatal("task exit channel closed before receiving event")
+				}
+
+				// ignore events for other containers in the test namespace.
+				if taskExit.ContainerID != id {
+					continue
+				}
+
+				if taskExit.ExitedAt.IsZero() {
+					t.Error("got task exit time zero")
+				}
+
+				got, err := runtime.Inspect(ctx, id)
+				if err != nil {
+					t.Fatalf("unexpected inspect after task exit error: %v", err)
+				}
+				if got.Task == nil {
+					t.Fatal("got nil task after task exit, want stopped task")
+				}
+				if got.Task.ExitCode != taskExit.ExitCode {
+					t.Errorf("got inspected exit code %d, want event code %d", got.Task.ExitCode, taskExit.ExitCode)
+				}
+				if !got.Task.ExitedAt.Equal(taskExit.ExitedAt) {
+					t.Errorf("got inspected exit time %v, want event time %v", got.Task.ExitedAt, taskExit.ExitedAt)
+				}
+
+				return
+
+			case err, ok := <-errCh:
+				if !ok {
+					t.Fatal("subscription ended before receiving task exit event")
+				}
+				t.Fatalf("unexpected task exit subscription error: %v", err)
+
+			case <-ctx.Done():
+				t.Fatalf("timeout waiting for task exit event for container %q: %v", id, ctx.Err())
+			}
 		}
 	})
 }

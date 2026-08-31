@@ -6,10 +6,12 @@ import (
 	"syscall"
 	"time"
 
+	eventtypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/cio"
 	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/containerd/errdefs"
+	"github.com/containerd/typeurl/v2"
 	"github.com/fedebram/hambo/internal/container"
 )
 
@@ -100,7 +102,9 @@ func (r *Runtime) Inspect(ctx context.Context, id string) (container.RuntimeCont
 		}
 	case client.Stopped:
 		rc.Task = &container.RuntimeTask{
-			State: container.TaskStateStopped,
+			State:    container.TaskStateStopped,
+			ExitCode: tStatus.ExitStatus,
+			ExitedAt: tStatus.ExitTime.UTC(),
 		}
 	default:
 		return container.RuntimeContainer{}, fmt.Errorf(
@@ -549,4 +553,97 @@ func (r *Runtime) DeleteTask(ctx context.Context, containerID string) error {
 			container.ErrOperationNotAllowed,
 		)
 	}
+}
+
+func (r *Runtime) SubscribeTaskExit(ctx context.Context) (<-chan container.RuntimeTaskExit, <-chan error) {
+	filter := fmt.Sprintf(`namespace==%q,topic==%q`, r.client.DefaultNamespace(), "/tasks/exit")
+	envelopeCh, subscriptionErrCh := r.client.Subscribe(ctx, filter)
+
+	taskExitCh := make(chan container.RuntimeTaskExit, 10)
+	errCh := make(chan error, 1)
+
+	go func() {
+		defer func() {
+			close(taskExitCh)
+			close(errCh)
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case err, ok := <-subscriptionErrCh:
+				if !ok {
+					return
+				}
+				if err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					errCh <- fmt.Errorf(
+						"subscribe to containerd task exit events: %w",
+						err,
+					)
+				}
+				return
+			case envelope, ok := <-envelopeCh:
+				if !ok {
+					return
+				}
+				if envelope == nil {
+					continue
+				}
+				if envelope.Event == nil {
+					errCh <- fmt.Errorf("decode containerd task exit event: payload is nil")
+					return
+				}
+
+				decodedEvent, err := typeurl.UnmarshalAny(envelope.Event)
+				if err != nil {
+					errCh <- fmt.Errorf("decode containerd task exit event: %w", err)
+					return
+				}
+
+				taskExit, ok := decodedEvent.(*eventtypes.TaskExit)
+				if !ok {
+					errCh <- fmt.Errorf(
+						"decode containerd task exit event: got payload type %T",
+						decodedEvent,
+					)
+					return
+				}
+				if taskExit == nil {
+					errCh <- fmt.Errorf("decode containerd task exit event: decoded payload is nil")
+					return
+				}
+
+				if taskExit.ID != taskExit.ContainerID {
+					continue
+				}
+				if taskExit.ExitedAt == nil {
+					errCh <- fmt.Errorf(
+						"decode containerd task exit event for container %q: exit time is nil",
+						taskExit.ContainerID,
+					)
+					return
+				}
+
+				runtimeTaskExit := container.RuntimeTaskExit{
+					ContainerID: taskExit.ContainerID,
+					ExitCode:    taskExit.ExitStatus,
+					ExitedAt:    taskExit.ExitedAt.AsTime(),
+				}
+
+				select {
+				// the task exit channel can be stuck (almost impossible since it is buffered).
+				// so we select on context done.
+				case taskExitCh <- runtimeTaskExit:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return taskExitCh, errCh
 }
