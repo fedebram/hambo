@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	containerdclient "github.com/containerd/containerd/v2/client"
 	"github.com/fedebram/hambo/internal/api"
+	"github.com/fedebram/hambo/internal/boltstore"
 	cninetwork "github.com/fedebram/hambo/internal/cni"
 	"github.com/fedebram/hambo/internal/container"
 	containerdruntime "github.com/fedebram/hambo/internal/containerd"
@@ -25,6 +27,7 @@ const (
 	defaultContainerdNamespace = "hambo"
 	defaultCNIPluginDir        = "/opt/cni/bin"
 	defaultCNIPluginConfDir    = "/var/lib/hambo/cni"
+	defaultStorePath           = "/var/lib/hambo/hambo.db"
 	workerCount                = 1
 	workerListenerRetryDelay   = time.Second
 	shutdownGracePeriod        = 5 * time.Second
@@ -70,6 +73,7 @@ func main() {
 type runConfig struct {
 	listener            net.Listener
 	containerdNamespace string
+	storePath           string
 }
 
 type runOption func(*runConfig)
@@ -94,9 +98,20 @@ func withContainerdNamespace(namespace string) runOption {
 	}
 }
 
+func withStorePath(path string) runOption {
+	if path == "" {
+		panic("hambod: store path cannot be empty")
+	}
+
+	return func(cfg *runConfig) {
+		cfg.storePath = path
+	}
+}
+
 func run(ctx context.Context, options ...runOption) (runErr error) {
 	cfg := runConfig{
 		containerdNamespace: defaultContainerdNamespace,
+		storePath:           defaultStorePath,
 	}
 	for _, option := range options {
 		option(&cfg)
@@ -131,6 +146,21 @@ func run(ctx context.Context, options ...runOption) (runErr error) {
 		return fmt.Errorf("initialize container networking: %w", err)
 	}
 
+	// match the cni directory permissions. It is fine to allow others to read and traverse the directory.
+	if err := os.MkdirAll(filepath.Dir(cfg.storePath), 0o755); err != nil {
+		return fmt.Errorf("create store directory: %w", err)
+	}
+
+	store, err := boltstore.Open(cfg.storePath)
+	if err != nil {
+		return fmt.Errorf("open container store: %w", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("close container store: %w", err))
+		}
+	}()
+
 	listener := cfg.listener
 	if listener == nil {
 		var err error
@@ -141,7 +171,6 @@ func run(ctx context.Context, options ...runOption) (runErr error) {
 	}
 
 	queue := container.NewMemoryQueue()
-	store := container.NewMemoryStore()
 	service := container.NewService(store, queue)
 	handler := api.NewServer(service)
 	runtime := containerdruntime.NewRuntime(containerdClient)

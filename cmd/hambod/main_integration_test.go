@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,7 @@ func TestRunProcessesContainers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
+	storePath := filepath.Join(t.TempDir(), "hambo.db")
 
 	runErrC := make(chan error, 1)
 	go func() {
@@ -109,6 +111,7 @@ func TestRunProcessesContainers(t *testing.T) {
 			ctx,
 			withListener(listener),
 			withContainerdNamespace(integrationNamespace),
+			withStorePath(storePath),
 		)
 	}()
 	t.Cleanup(func() {

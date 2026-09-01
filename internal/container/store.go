@@ -1,6 +1,7 @@
 package container
 
 import (
+	"fmt"
 	"slices"
 	"sync"
 )
@@ -54,6 +55,9 @@ func (s *MemoryStore) Modify(name string, modify func(*Container) error) error {
 
 	if err := modify(&c); err != nil {
 		return err
+	}
+	if c.Name != name {
+		return fmt.Errorf("container name cannot be changed: %w", ErrOperationNotAllowed)
 	}
 	s.containers[name] = c
 	return nil
