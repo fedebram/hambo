@@ -14,9 +14,21 @@ type CreateContainerRequest struct {
 	Image string `json:"image"`
 }
 
-type ValidationErrorResponse struct {
-	Errors map[string]string `json:"errors"`
+type ErrorResponse struct {
+	Code    string            `json:"code"`
+	Message string            `json:"message"`
+	Fields  map[string]string `json:"fields,omitempty"`
 }
+
+const (
+	ErrorCodeNotFound            = "not_found"
+	ErrorCodeAlreadyExists       = "already_exists"
+	ErrorCodeOperationNotAllowed = "operation_not_allowed"
+	ErrorCodeInternal            = "internal_error"
+	ErrorCodeValidationFailed    = "validation_failed"
+	ErrorCodeInvalidJSON         = "invalid_json"
+	ErrorCodeUnsupportedMediaType = "unsupported_media_type"
+)
 
 type Container struct {
 	Name              string            `json:"name"`

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	publicapi "github.com/fedebram/hambo/api"
 	"github.com/fedebram/hambo/internal/container"
 )
 
@@ -92,13 +93,18 @@ func TestCreateContainerRejectsMissingImage(t *testing.T) {
 	requireStatus(t, response.Code, http.StatusUnprocessableEntity)
 	assertContentType(t, response.Header(), "application/json")
 
-	var got struct {
-		Errors map[string]string `json:"errors"`
-	}
+	var got publicapi.ErrorResponse
 	decodeJSON(t, response.Body, &got)
 
-	if got.Errors["image"] != "must be provided" {
-		t.Errorf("got image error %q, want %q", got.Errors["image"], "must be provided")
+	if got.Code != publicapi.ErrorCodeValidationFailed {
+		t.Errorf("got error code %q, want %q", got.Code, publicapi.ErrorCodeValidationFailed)
+	}
+	if got.Message != "request validation failed" {
+		t.Errorf("got error message %q, want %q", got.Message, "request validation failed")
+	}
+	wantFields := map[string]string{"image": "must be provided"}
+	if !maps.Equal(got.Fields, wantFields) {
+		t.Errorf("got fields %+v, want %+v", got.Fields, wantFields)
 	}
 
 	getResponse := makeRequest(t, srv, http.MethodGet, "/containers/hello", nil)
@@ -106,26 +112,24 @@ func TestCreateContainerRejectsMissingImage(t *testing.T) {
 }
 
 func TestCreateContainerReturnsAllValidationErrors(t *testing.T) {
-	type validationResponse struct {
-		Errors map[string]string `json:"errors"`
-	}
-
 	response := makeRequest(t, newTestServer(t), http.MethodPost, "/containers", struct{}{})
 
 	requireStatus(t, response.Code, http.StatusUnprocessableEntity)
 	assertContentType(t, response.Header(), "application/json")
 
-	var got validationResponse
+	var got publicapi.ErrorResponse
 	decodeJSON(t, response.Body, &got)
 
-	want := validationResponse{
-		Errors: map[string]string{
+	want := publicapi.ErrorResponse{
+		Code:    publicapi.ErrorCodeValidationFailed,
+		Message: "request validation failed",
+		Fields: map[string]string{
 			"name":  "must be provided",
 			"image": "must be provided",
 		},
 	}
 
-	if !maps.Equal(got.Errors, want.Errors) {
+	if got.Code != want.Code || got.Message != want.Message || !maps.Equal(got.Fields, want.Fields) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
@@ -134,6 +138,20 @@ func TestGetMissingContainerReturnsNotFound(t *testing.T) {
 	response := makeRequest(t, newTestServer(t), http.MethodGet, "/containers/missing", nil)
 
 	assertStatus(t, response.Code, http.StatusNotFound)
+	assertContentType(t, response.Header(), "application/json")
+
+	var got publicapi.ErrorResponse
+	decodeJSON(t, response.Body, &got)
+
+	if got.Code != publicapi.ErrorCodeNotFound {
+		t.Errorf("got error code %q, want %q", got.Code, publicapi.ErrorCodeNotFound)
+	}
+	if got.Message != `container "missing" not found` {
+		t.Errorf("got error message %q, want %q", got.Message, `container "missing" not found`)
+	}
+	if len(got.Fields) != 0 {
+		t.Errorf("got fields %+v, want none", got.Fields)
+	}
 }
 
 func TestContainerServiceFailuresReturnInternalServerError(t *testing.T) {
@@ -150,6 +168,7 @@ func TestContainerServiceFailuresReturnInternalServerError(t *testing.T) {
 		}},
 		{"DELETE", http.MethodDelete, "/containers/hello", nil},
 		{"START", http.MethodPost, "/containers/hello/start", nil},
+		{"STOP", http.MethodPost, "/containers/hello/stop", nil},
 	}
 
 	for _, tt := range tests {
@@ -159,6 +178,20 @@ func TestContainerServiceFailuresReturnInternalServerError(t *testing.T) {
 			response := makeRequest(t, NewServer(service, WithLogger(logger)), tt.method, tt.path, tt.body)
 
 			assertStatus(t, response.Code, http.StatusInternalServerError)
+			assertContentType(t, response.Header(), "application/json")
+
+			var got publicapi.ErrorResponse
+			decodeJSON(t, response.Body, &got)
+
+			if got.Code != publicapi.ErrorCodeInternal {
+				t.Errorf("got error code %q, want %q", got.Code, publicapi.ErrorCodeInternal)
+			}
+			if got.Message != "internal server error" {
+				t.Errorf("got error message %q, want %q", got.Message, "internal server error")
+			}
+			if len(got.Fields) != 0 {
+				t.Errorf("got fields %+v, want none", got.Fields)
+			}
 		})
 	}
 }
@@ -215,6 +248,24 @@ func TestCreateContainerRejectsDuplicateName(t *testing.T) {
 	})
 
 	assertStatus(t, duplicateResponse.Code, http.StatusConflict)
+	assertContentType(t, duplicateResponse.Header(), "application/json")
+
+	var duplicateError publicapi.ErrorResponse
+	decodeJSON(t, duplicateResponse.Body, &duplicateError)
+
+	if duplicateError.Code != publicapi.ErrorCodeAlreadyExists {
+		t.Errorf("got error code %q, want %q", duplicateError.Code, publicapi.ErrorCodeAlreadyExists)
+	}
+	if duplicateError.Message != `container "hello" already exists` {
+		t.Errorf(
+			"got error message %q, want %q",
+			duplicateError.Message,
+			`container "hello" already exists`,
+		)
+	}
+	if len(duplicateError.Fields) != 0 {
+		t.Errorf("got fields %+v, want none", duplicateError.Fields)
+	}
 
 	getResponse := makeRequest(t, srv, http.MethodGet, "/containers/hello", nil)
 
@@ -282,6 +333,21 @@ func TestDeleteContainerRejectsMultipleCalls(t *testing.T) {
 
 	secondResponse := makeRequest(t, s, http.MethodDelete, "/containers/hello", nil)
 	requireStatus(t, secondResponse.Code, http.StatusConflict)
+	assertContentType(t, secondResponse.Header(), "application/json")
+
+	var got publicapi.ErrorResponse
+	decodeJSON(t, secondResponse.Body, &got)
+
+	if got.Code != publicapi.ErrorCodeOperationNotAllowed {
+		t.Errorf("got error code %q, want %q", got.Code, publicapi.ErrorCodeOperationNotAllowed)
+	}
+	wantMessage := `operation not allowed: deletion for container "hello" already requested`
+	if got.Message != wantMessage {
+		t.Errorf("got error message %q, want %q", got.Message, wantMessage)
+	}
+	if len(got.Fields) != 0 {
+		t.Errorf("got fields %+v, want none", got.Fields)
+	}
 }
 
 func TestDeleteMissingContainerReturnsNotFound(t *testing.T) {
@@ -294,6 +360,20 @@ func TestDeleteMissingContainerReturnsNotFound(t *testing.T) {
 	)
 
 	assertStatus(t, response.Code, http.StatusNotFound)
+	assertContentType(t, response.Header(), "application/json")
+
+	var got publicapi.ErrorResponse
+	decodeJSON(t, response.Body, &got)
+
+	if got.Code != publicapi.ErrorCodeNotFound {
+		t.Errorf("got error code %q, want %q", got.Code, publicapi.ErrorCodeNotFound)
+	}
+	if got.Message != `container "missing" not found` {
+		t.Errorf("got error message %q, want %q", got.Message, `container "missing" not found`)
+	}
+	if len(got.Fields) != 0 {
+		t.Errorf("got fields %+v, want none", got.Fields)
+	}
 }
 
 func TestDeleteRunningContainerReturnsConflict(t *testing.T) {
@@ -314,6 +394,21 @@ func TestDeleteRunningContainerReturnsConflict(t *testing.T) {
 	response := makeRequest(t, srv, http.MethodDelete, "/containers/hello", nil)
 
 	assertStatus(t, response.Code, http.StatusConflict)
+	assertContentType(t, response.Header(), "application/json")
+
+	var responseError publicapi.ErrorResponse
+	decodeJSON(t, response.Body, &responseError)
+
+	if responseError.Code != publicapi.ErrorCodeOperationNotAllowed {
+		t.Errorf("got error code %q, want %q", responseError.Code, publicapi.ErrorCodeOperationNotAllowed)
+	}
+	wantMessage := `operation not allowed: container "hello" must be stopped before requesting deletion`
+	if responseError.Message != wantMessage {
+		t.Errorf("got error message %q, want %q", responseError.Message, wantMessage)
+	}
+	if len(responseError.Fields) != 0 {
+		t.Errorf("got fields %+v, want none", responseError.Fields)
+	}
 
 	got, err := store.Get(want.Name)
 	if err != nil {
@@ -365,6 +460,20 @@ func TestStartMissingContainerReturnsNotFound(t *testing.T) {
 	)
 
 	assertStatus(t, response.Code, http.StatusNotFound)
+	assertContentType(t, response.Header(), "application/json")
+
+	var got publicapi.ErrorResponse
+	decodeJSON(t, response.Body, &got)
+
+	if got.Code != publicapi.ErrorCodeNotFound {
+		t.Errorf("got error code %q, want %q", got.Code, publicapi.ErrorCodeNotFound)
+	}
+	if got.Message != `container "missing" not found` {
+		t.Errorf("got error message %q, want %q", got.Message, `container "missing" not found`)
+	}
+	if len(got.Fields) != 0 {
+		t.Errorf("got fields %+v, want none", got.Fields)
+	}
 }
 
 func TestStartRunningContainerReturnsConflict(t *testing.T) {
@@ -384,6 +493,21 @@ func TestStartRunningContainerReturnsConflict(t *testing.T) {
 	response := makeRequest(t, srv, http.MethodPost, "/containers/hello/start", nil)
 
 	assertStatus(t, response.Code, http.StatusConflict)
+	assertContentType(t, response.Header(), "application/json")
+
+	var responseError publicapi.ErrorResponse
+	decodeJSON(t, response.Body, &responseError)
+
+	if responseError.Code != publicapi.ErrorCodeOperationNotAllowed {
+		t.Errorf("got error code %q, want %q", responseError.Code, publicapi.ErrorCodeOperationNotAllowed)
+	}
+	wantMessage := `operation not allowed: container "hello" cannot be started from state "running"`
+	if responseError.Message != wantMessage {
+		t.Errorf("got error message %q, want %q", responseError.Message, wantMessage)
+	}
+	if len(responseError.Fields) != 0 {
+		t.Errorf("got fields %+v, want none", responseError.Fields)
+	}
 }
 
 func TestStopContainer(t *testing.T) {
@@ -414,5 +538,65 @@ func TestStopContainer(t *testing.T) {
 
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestStopMissingContainerReturnsNotFound(t *testing.T) {
+	response := makeRequest(
+		t,
+		newTestServer(t),
+		http.MethodPost,
+		"/containers/missing/stop",
+		nil,
+	)
+
+	assertStatus(t, response.Code, http.StatusNotFound)
+	assertContentType(t, response.Header(), "application/json")
+
+	var got publicapi.ErrorResponse
+	decodeJSON(t, response.Body, &got)
+
+	if got.Code != publicapi.ErrorCodeNotFound {
+		t.Errorf("got error code %q, want %q", got.Code, publicapi.ErrorCodeNotFound)
+	}
+	if got.Message != `container "missing" not found` {
+		t.Errorf("got error message %q, want %q", got.Message, `container "missing" not found`)
+	}
+	if len(got.Fields) != 0 {
+		t.Errorf("got fields %+v, want none", got.Fields)
+	}
+}
+
+func TestStopStoppedContainerReturnsConflict(t *testing.T) {
+	store := container.NewMemoryStore()
+	service := container.NewService(store, container.NewMemoryQueue())
+	srv := NewServer(service)
+
+	existing := container.Container{
+		Name:  "hello",
+		Image: "docker.io/library/alpine:latest",
+		State: container.StateStopped,
+	}
+	if err := store.Create(existing); err != nil {
+		t.Fatalf("unexpected store create error: %v", err)
+	}
+
+	response := makeRequest(t, srv, http.MethodPost, "/containers/hello/stop", nil)
+
+	assertStatus(t, response.Code, http.StatusConflict)
+	assertContentType(t, response.Header(), "application/json")
+
+	var responseError publicapi.ErrorResponse
+	decodeJSON(t, response.Body, &responseError)
+
+	if responseError.Code != publicapi.ErrorCodeOperationNotAllowed {
+		t.Errorf("got error code %q, want %q", responseError.Code, publicapi.ErrorCodeOperationNotAllowed)
+	}
+	wantMessage := `operation not allowed: container "hello" cannot be stopped from state "stopped"`
+	if responseError.Message != wantMessage {
+		t.Errorf("got error message %q, want %q", responseError.Message, wantMessage)
+	}
+	if len(responseError.Fields) != 0 {
+		t.Errorf("got fields %+v, want none", responseError.Fields)
 	}
 }

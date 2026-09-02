@@ -2,12 +2,14 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
+	publicapi "github.com/fedebram/hambo/api"
 	"github.com/fedebram/hambo/internal/container"
 )
 
-// TODO: return json error responses, including page not found and method not allowed (overriding the default mux behaviour)
+// TODO: return json error response for method not allowed and page not found (overriding the default mux)
 
 type healthResponse struct {
 	Status string `json:"status"`
@@ -44,10 +46,10 @@ func (srv *server) createContainerHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if problems := input.valid(); len(problems) > 0 {
-		srv.writeJSON(w, http.StatusUnprocessableEntity, struct {
-			Errors map[string]string `json:"errors"`
-		}{
-			Errors: problems,
+		srv.writeJSON(w, http.StatusUnprocessableEntity, publicapi.ErrorResponse{
+			Code:    publicapi.ErrorCodeValidationFailed,
+			Message: "request validation failed",
+			Fields:  problems,
 		})
 		return
 	}
@@ -59,12 +61,22 @@ func (srv *server) createContainerHandler(w http.ResponseWriter, r *http.Request
 
 	c, err := srv.service.Create(c)
 	if errors.Is(err, container.ErrAlreadyExists) {
-		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
+		srv.writeErrorJSON(
+			w,
+			http.StatusConflict,
+			publicapi.ErrorCodeAlreadyExists,
+			fmt.Sprintf("container %q already exists", input.Name),
+		)
 		return
 	}
 	if err != nil {
 		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		srv.writeErrorJSON(
+			w,
+			http.StatusInternalServerError,
+			publicapi.ErrorCodeInternal,
+			"internal server error",
+		)
 		return
 	}
 	srv.writeJSON(w, http.StatusCreated, c)
@@ -76,12 +88,22 @@ func (srv *server) getContainerHandler(w http.ResponseWriter, r *http.Request) {
 	c, err := srv.service.Get(name)
 
 	if errors.Is(err, container.ErrNotFound) {
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		srv.writeErrorJSON(
+			w,
+			http.StatusNotFound,
+			publicapi.ErrorCodeNotFound,
+			fmt.Sprintf("container %q not found", name),
+		)
 		return
 	}
 	if err != nil {
 		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		srv.writeErrorJSON(
+			w,
+			http.StatusInternalServerError,
+			publicapi.ErrorCodeInternal,
+			"internal server error",
+		)
 		return
 	}
 
@@ -93,16 +115,31 @@ func (srv *server) startContainerHandler(w http.ResponseWriter, r *http.Request)
 
 	c, err := srv.service.Start(name)
 	if errors.Is(err, container.ErrNotFound) {
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		srv.writeErrorJSON(
+			w,
+			http.StatusNotFound,
+			publicapi.ErrorCodeNotFound,
+			fmt.Sprintf("container %q not found", name),
+		)
 		return
 	}
 	if errors.Is(err, container.ErrOperationNotAllowed) {
-		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
+		srv.writeErrorJSON(
+			w,
+			http.StatusConflict,
+			publicapi.ErrorCodeOperationNotAllowed,
+			err.Error(),
+		)
 		return
 	}
 	if err != nil {
 		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		srv.writeErrorJSON(
+			w,
+			http.StatusInternalServerError,
+			publicapi.ErrorCodeInternal,
+			"internal server error",
+		)
 		return
 	}
 
@@ -114,16 +151,31 @@ func (srv *server) stopContainerHandler(w http.ResponseWriter, r *http.Request) 
 
 	c, err := srv.service.Stop(name)
 	if errors.Is(err, container.ErrNotFound) {
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		srv.writeErrorJSON(
+			w,
+			http.StatusNotFound,
+			publicapi.ErrorCodeNotFound,
+			fmt.Sprintf("container %q not found", name),
+		)
 		return
 	}
 	if errors.Is(err, container.ErrOperationNotAllowed) {
-		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
+		srv.writeErrorJSON(
+			w,
+			http.StatusConflict,
+			publicapi.ErrorCodeOperationNotAllowed,
+			err.Error(),
+		)
 		return
 	}
 	if err != nil {
 		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		srv.writeErrorJSON(
+			w,
+			http.StatusInternalServerError,
+			publicapi.ErrorCodeInternal,
+			"internal server error",
+		)
 		return
 	}
 
@@ -135,17 +187,31 @@ func (srv *server) deleteContainerHandler(w http.ResponseWriter, r *http.Request
 
 	c, err := srv.service.Delete(name)
 	if errors.Is(err, container.ErrNotFound) {
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		srv.writeErrorJSON(
+			w,
+			http.StatusNotFound,
+			publicapi.ErrorCodeNotFound,
+			fmt.Sprintf("container %q not found", name),
+		)
 		return
 	}
 	if errors.Is(err, container.ErrOperationNotAllowed) {
-		// TODO: a more informative response? On the container service we already enrich the error!
-		http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
+		srv.writeErrorJSON(
+			w,
+			http.StatusConflict,
+			publicapi.ErrorCodeOperationNotAllowed,
+			err.Error(),
+		)
 		return
 	}
 	if err != nil {
 		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		srv.writeErrorJSON(
+			w,
+			http.StatusInternalServerError,
+			publicapi.ErrorCodeInternal,
+			"internal server error",
+		)
 		return
 	}
 

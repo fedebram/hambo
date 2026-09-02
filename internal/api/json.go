@@ -6,6 +6,8 @@ import (
 	"io"
 	"mime"
 	"net/http"
+
+	publicapi "github.com/fedebram/hambo/api"
 )
 
 // readJSON is based on https://www.alexedwards.net/blog/how-to-properly-parse-a-json-request-body
@@ -16,14 +18,24 @@ func (srv *server) readJSON(w http.ResponseWriter, r *http.Request, dst any) boo
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	// we enforce content type application because maybe in the future we want to support other types like cbor
 	if err != nil || mediaType != "application/json" {
-		http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+		srv.writeErrorJSON(
+			w,
+			http.StatusUnsupportedMediaType,
+			publicapi.ErrorCodeUnsupportedMediaType,
+			"Content-Type must be application/json",
+		)
 		return false
 	}
 
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		srv.writeErrorJSON(
+			w,
+			http.StatusBadRequest,
+			publicapi.ErrorCodeInvalidJSON,
+			"request body contains invalid JSON",
+		)
 		return false
 	}
 
@@ -31,7 +43,12 @@ func (srv *server) readJSON(w http.ResponseWriter, r *http.Request, dst any) boo
 	var extra any
 	err = dec.Decode(&extra)
 	if !errors.Is(err, io.EOF) {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		srv.writeErrorJSON(
+			w,
+			http.StatusBadRequest,
+			publicapi.ErrorCodeInvalidJSON,
+			"request body contains invalid JSON",
+		)
 		return false
 	}
 
@@ -54,4 +71,11 @@ func (srv *server) writeJSON(w http.ResponseWriter, statusCode int, data any) {
 		// else to do except log the error. Write failed!!
 		srv.logger.Error("could not write JSON response", "error", err)
 	}
+}
+
+func (srv *server) writeErrorJSON(w http.ResponseWriter, statusCode int, code, message string) {
+	srv.writeJSON(w, statusCode, publicapi.ErrorResponse{
+		Code:    code,
+		Message: message,
+	})
 }

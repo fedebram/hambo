@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	publicapi "github.com/fedebram/hambo/api"
 )
 
 // We test some behaviour already implemented by encoding/json, even though
@@ -48,12 +50,14 @@ func TestServerReadJSON(t *testing.T) {
 		contentType string
 		input       string
 		wantStatus  int
+		wantCode    string
+		wantMessage string
 	}{
-		{"rejects malformed JSON", "application/json", `{"name":`, http.StatusBadRequest},
-		{"rejects unknown fields", "application/json", `{"name":"hello","extra":true}`, http.StatusBadRequest},
-		{"rejects multiple JSON values", "application/json", `{"name":"hello"}{}`, http.StatusBadRequest},
-		{"rejects a non-JSON content type", "text/plain", `{"name":"hello"}`, http.StatusUnsupportedMediaType},
-		{"rejects a missing content type", "", `{"name":"hello"}`, http.StatusUnsupportedMediaType},
+		{"rejects malformed JSON", "application/json", `{"name":`, http.StatusBadRequest, publicapi.ErrorCodeInvalidJSON, "request body contains invalid JSON"},
+		{"rejects unknown fields", "application/json", `{"name":"hello","extra":true}`, http.StatusBadRequest, publicapi.ErrorCodeInvalidJSON, "request body contains invalid JSON"},
+		{"rejects multiple JSON values", "application/json", `{"name":"hello"}{}`, http.StatusBadRequest, publicapi.ErrorCodeInvalidJSON, "request body contains invalid JSON"},
+		{"rejects a non-JSON content type", "text/plain", `{"name":"hello"}`, http.StatusUnsupportedMediaType, publicapi.ErrorCodeUnsupportedMediaType, "Content-Type must be application/json"},
+		{"rejects a missing content type", "", `{"name":"hello"}`, http.StatusUnsupportedMediaType, publicapi.ErrorCodeUnsupportedMediaType, "Content-Type must be application/json"},
 	}
 
 	for _, tt := range invalidTests {
@@ -64,11 +68,25 @@ func TestServerReadJSON(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 
-			var got payload
-			if ok := srv.readJSON(response, request, &got); ok {
+			var decoded payload
+			if ok := srv.readJSON(response, request, &decoded); ok {
 				t.Fatal("expected JSON to be rejected")
 			}
 			assertStatus(t, response.Code, tt.wantStatus)
+			assertContentType(t, response.Header(), "application/json")
+
+			var got publicapi.ErrorResponse
+			decodeJSON(t, response.Body, &got)
+
+			if got.Code != tt.wantCode {
+				t.Errorf("got error code %q, want %q", got.Code, tt.wantCode)
+			}
+			if got.Message != tt.wantMessage {
+				t.Errorf("got error message %q, want %q", got.Message, tt.wantMessage)
+			}
+			if len(got.Fields) != 0 {
+				t.Errorf("got fields %+v, want none", got.Fields)
+			}
 		})
 	}
 }
