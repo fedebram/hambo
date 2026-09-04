@@ -19,3 +19,13 @@ func WithLogger(logger *slog.Logger) ServerOption {
 		srv.logger = logger
 	}
 }
+
+func WithImageService(service imageService) ServerOption {
+	if service == nil {
+		panic("api: image service cannot be nil")
+	}
+
+	return func(srv *server) {
+		srv.imageService = service
+	}
+}

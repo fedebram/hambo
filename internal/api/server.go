@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"github.com/fedebram/hambo/internal/container"
+	"github.com/fedebram/hambo/internal/image"
 )
 
 type containerService interface {
@@ -15,10 +17,16 @@ type containerService interface {
 	Delete(name string) (container.Container, error)
 }
 
+type imageService interface {
+	List(context.Context, ...image.ListFilter) ([]image.Image, error)
+	Pull(context.Context, string, image.PullProgressFunc) (image.Image, error)
+}
+
 type server struct {
-	mux     *http.ServeMux
-	service containerService
-	logger  *slog.Logger
+	mux          *http.ServeMux
+	service      containerService
+	imageService imageService
+	logger       *slog.Logger
 }
 
 // Inspired by https://grafana.com/blog/how-i-write-http-services-in-go-after-13-years/

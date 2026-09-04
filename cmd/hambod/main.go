@@ -19,6 +19,7 @@ import (
 	cninetwork "github.com/fedebram/hambo/internal/cni"
 	"github.com/fedebram/hambo/internal/container"
 	containerdruntime "github.com/fedebram/hambo/internal/containerd"
+	imageservice "github.com/fedebram/hambo/internal/image"
 )
 
 const (
@@ -172,7 +173,10 @@ func run(ctx context.Context, options ...runOption) (runErr error) {
 
 	queue := container.NewMemoryQueue()
 	service := container.NewService(store, queue)
-	handler := api.NewServer(service)
+	imageService := imageservice.NewService(containerdClient)
+	
+	// inject the image service dependency with the option pattern mainly to preserve testing
+	handler := api.NewServer(service, api.WithImageService(imageService))
 	runtime := containerdruntime.NewRuntime(containerdClient)
 
 	workerCtx, stopWorkers := context.WithCancel(ctx)

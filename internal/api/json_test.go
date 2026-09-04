@@ -123,3 +123,50 @@ func TestServerWriteJSON(t *testing.T) {
 		assertStatus(t, response.Code, http.StatusInternalServerError)
 	})
 }
+
+func TestJSONStream(t *testing.T) {
+	type payload struct {
+		Name string `json:"name"`
+	}
+
+	response := httptest.NewRecorder()
+
+	stream, ok := startJSONStream(response, http.StatusOK)
+	if !ok {
+		t.Fatal("expected response writer to support streaming")
+	}
+
+	assertStatus(t, response.Code, http.StatusOK)
+	assertContentType(t, response.Header(), "application/x-ndjson")
+
+	if err := stream.Write(payload{Name: "first"}); err != nil {
+		t.Fatalf("write first event: %v", err)
+	}
+
+	want := "{\"name\":\"first\"}\n"
+	if got := response.Body.String(); got != want {
+		t.Errorf("after first write: got body %q, want %q", got, want)
+	}
+
+	if err := stream.Write(payload{Name: "second"}); err != nil {
+		t.Fatalf("write second event: %v", err)
+	}
+
+	want = "{\"name\":\"first\"}\n{\"name\":\"second\"}\n"
+	if got := response.Body.String(); got != want {
+		t.Errorf("after second write: got body %q, want %q", got, want)
+	}
+}
+
+func TestJSONStreamWriteError(t *testing.T) {
+	response := httptest.NewRecorder()
+
+	stream, ok := startJSONStream(response, http.StatusOK)
+	if !ok {
+		t.Fatal("expected response writer to support streaming")
+	}
+
+	if err := stream.Write(make(chan int)); err == nil {
+		t.Fatal("expected write to fail")
+	}
+}

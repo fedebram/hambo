@@ -9,6 +9,27 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
+type Image struct {
+	Reference string `json:"reference"`
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"size_bytes"`
+}
+
+type PullImageRequest struct {
+	Reference string `json:"reference"`
+}
+
+type ImagePullEvent struct {
+	Type         string        `json:"type"`
+	Status       string        `json:"status,omitempty"`
+	Name         string        `json:"name,omitempty"`
+	Digest       string        `json:"digest,omitempty"`
+	CurrentBytes int64         `json:"current_bytes,omitempty"`
+	TotalBytes   int64         `json:"total_bytes,omitempty"`
+	Image        Image         `json:"image,omitzero"`
+	Error        ErrorResponse `json:"error,omitzero"`
+}
+
 type CreateContainerRequest struct {
 	Name  string `json:"name"`
 	Image string `json:"image"`

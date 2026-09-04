@@ -10,6 +10,48 @@ import (
 	publicapi "github.com/fedebram/hambo/api"
 )
 
+type jsonStream struct {
+	encoder *json.Encoder
+	flusher http.Flusher
+	err     error
+}
+
+func startJSONStream(w http.ResponseWriter, statusCode int) (*jsonStream, bool) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return nil, false
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(statusCode)
+	flusher.Flush()
+
+	return &jsonStream{
+		encoder: json.NewEncoder(w),
+		flusher: flusher,
+	}, true
+}
+
+func (stream *jsonStream) Write(value any) error {
+	// not safe to call concurrently!
+
+	if stream.err != nil {
+		return stream.err
+	}
+	if err := stream.encoder.Encode(value); err != nil {
+		stream.err = err
+		return err
+	}
+
+	stream.flusher.Flush()
+	return nil
+}
+
+func (stream *jsonStream) Err() error {
+	return stream.err
+}
+
 // readJSON is based on https://www.alexedwards.net/blog/how-to-properly-parse-a-json-request-body
 
 // readJSON returns true when decoding succeeds. On failure it writes the appropriate
