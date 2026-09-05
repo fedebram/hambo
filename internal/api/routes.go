@@ -14,6 +14,7 @@ func (srv *server) addRoutes() {
 }
 
 func (srv *server) addImageRoutes() {
+	srv.mux.HandleFunc("DELETE /images/{name}", srv.deleteImageHandler)
 	srv.mux.HandleFunc("GET /images", srv.listImagesHandler)
 	srv.mux.HandleFunc("POST /images/pull", srv.pullImageHandler)
 }

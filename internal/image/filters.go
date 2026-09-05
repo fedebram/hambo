@@ -3,11 +3,11 @@ package image
 type ListFilter func(*listFilters)
 
 type listFilters struct {
-	references []string
+	names []string
 }
 
-func ByReference(reference string) ListFilter {
+func ByName(name string) ListFilter {
 	return func(filters *listFilters) {
-		filters.references = append(filters.references, reference)
+		filters.names = append(filters.names, name)
 	}
 }

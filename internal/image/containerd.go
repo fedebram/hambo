@@ -5,9 +5,11 @@ import (
 	"fmt"
 
 	"github.com/containerd/containerd/v2/client"
+	containerdimages "github.com/containerd/containerd/v2/core/images"
 	"github.com/containerd/containerd/v2/core/transfer"
 	transferimage "github.com/containerd/containerd/v2/core/transfer/image"
 	transferregistry "github.com/containerd/containerd/v2/core/transfer/registry"
+	"github.com/containerd/errdefs"
 	"github.com/containerd/platforms"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -24,12 +26,12 @@ func NewService(client *client.Client) *Service {
 	}
 }
 
-func newRegistrySource(ctx context.Context, reference string) (*transferregistry.OCIRegistry, error) {
-	source, err := transferregistry.NewOCIRegistry(ctx, reference)
+func newRegistrySource(ctx context.Context, name string) (*transferregistry.OCIRegistry, error) {
+	source, err := transferregistry.NewOCIRegistry(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"create registry source for image %q: %w",
-			reference,
+			name,
 			err,
 		)
 	}
@@ -37,9 +39,9 @@ func newRegistrySource(ctx context.Context, reference string) (*transferregistry
 	return source, nil
 }
 
-func (s *Service) newImageDestination(reference string) *transferimage.Store {
+func (s *Service) newImageDestination(name string) *transferimage.Store {
 	return transferimage.NewStore(
-		reference,
+		name,
 		transferimage.WithPlatforms(s.platform),
 		transferimage.WithUnpack(s.platform, ""),
 	)
@@ -48,13 +50,13 @@ func (s *Service) newImageDestination(reference string) *transferimage.Store {
 // pull logic based on containerd ctr pull implementation. The transfer api is pretty cool.
 // https://github.com/containerd/containerd/blob/main/cmd/ctr/commands/images/pull.go
 
-func (s *Service) Pull(ctx context.Context, reference string, report PullProgressFunc) (Image, error) {
-	source, err := newRegistrySource(ctx, reference)
+func (s *Service) Pull(ctx context.Context, name string, report PullProgressFunc) (Image, error) {
+	source, err := newRegistrySource(ctx, name)
 	if err != nil {
 		return Image{}, err
 	}
 
-	destination := s.newImageDestination(reference)
+	destination := s.newImageDestination(name)
 	progressFunc := func(progress transfer.Progress) {
 		if report == nil {
 			return
@@ -80,21 +82,21 @@ func (s *Service) Pull(ctx context.Context, reference string, report PullProgres
 		destination,
 		transfer.WithProgress(progressFunc),
 	); err != nil {
-		return Image{}, fmt.Errorf("pull image %q: %w", reference, err)
+		return Image{}, fmt.Errorf("pull image %q: %w", name, err)
 	}
 
-	containerdImage, err := s.client.GetImage(ctx, reference)
+	containerdImage, err := s.client.GetImage(ctx, name)
 	if err != nil {
-		return Image{}, fmt.Errorf("get pulled image %q: %w", reference, err)
+		return Image{}, fmt.Errorf("get pulled image %q: %w", name, err)
 	}
 
 	sizeBytes, err := containerdImage.Size(ctx)
 	if err != nil {
-		return Image{}, fmt.Errorf("calculate size of pulled image %q: %w", reference, err)
+		return Image{}, fmt.Errorf("calculate size of pulled image %q: %w", name, err)
 	}
 
 	return Image{
-		Reference: containerdImage.Name(),
+		Name:      containerdImage.Name(),
 		Digest:    containerdImage.Target().Digest.String(),
 		SizeBytes: sizeBytes,
 	}, nil
@@ -108,11 +110,11 @@ func (s *Service) List(ctx context.Context, filters ...ListFilter) ([]Image, err
 
 	// TODO: improve filtering
 
-	containerdFilters := make([]string, 0, len(config.references))
-	for _, reference := range config.references {
+	containerdFilters := make([]string, 0, len(config.names))
+	for _, name := range config.names {
 		containerdFilters = append(
 			containerdFilters,
-			fmt.Sprintf("name==%q", reference),
+			fmt.Sprintf("name==%q", name),
 		)
 	}
 
@@ -133,11 +135,32 @@ func (s *Service) List(ctx context.Context, filters ...ListFilter) ([]Image, err
 		}
 
 		result = append(result, Image{
-			Reference: containerdImage.Name(),
+			Name:      containerdImage.Name(),
 			Digest:    containerdImage.Target().Digest.String(),
 			SizeBytes: sizeBytes,
 		})
 	}
 
 	return result, nil
+}
+
+func (s *Service) Delete(ctx context.Context, name string) error {
+	imageStore := s.client.ImageService()
+	containerdImage, err := imageStore.Get(ctx, name)
+	if err != nil {
+		return fmt.Errorf("get image %q: %w", name, err)
+	}
+
+	if err := imageStore.Delete(
+		ctx,
+		name,
+		containerdimages.DeleteTarget(&containerdImage.Target),
+	); err != nil {
+		if errdefs.IsNotFound(err) {
+			return fmt.Errorf("image %q changed or was removed during deletion: %w", name, err)
+		}
+		return fmt.Errorf("delete image %q: %w", name, err)
+	}
+
+	return nil
 }

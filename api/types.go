@@ -10,13 +10,13 @@ type HealthResponse struct {
 }
 
 type Image struct {
-	Reference string `json:"reference"`
+	Name      string `json:"name"`
 	Digest    string `json:"digest"`
 	SizeBytes int64  `json:"size_bytes"`
 }
 
 type PullImageRequest struct {
-	Reference string `json:"reference"`
+	Name string `json:"name"`
 }
 
 type ImagePullEvent struct {
@@ -42,12 +42,12 @@ type ErrorResponse struct {
 }
 
 const (
-	ErrorCodeNotFound            = "not_found"
-	ErrorCodeAlreadyExists       = "already_exists"
-	ErrorCodeOperationNotAllowed = "operation_not_allowed"
-	ErrorCodeInternal            = "internal_error"
-	ErrorCodeValidationFailed    = "validation_failed"
-	ErrorCodeInvalidJSON         = "invalid_json"
+	ErrorCodeNotFound             = "not_found"
+	ErrorCodeAlreadyExists        = "already_exists"
+	ErrorCodeOperationNotAllowed  = "operation_not_allowed"
+	ErrorCodeInternal             = "internal_error"
+	ErrorCodeValidationFailed     = "validation_failed"
+	ErrorCodeInvalidJSON          = "invalid_json"
 	ErrorCodeUnsupportedMediaType = "unsupported_media_type"
 )
 

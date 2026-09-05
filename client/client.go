@@ -62,6 +62,10 @@ func (c *Client) CreateContainer(ctx context.Context, input api.CreateContainerR
 	return container, err
 }
 
+func (c *Client) DeleteImage(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "images/"+url.PathEscape(name), nil, nil)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, input, output any) error {
 	var requestBody io.Reader
 	if input != nil {

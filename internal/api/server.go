@@ -18,6 +18,7 @@ type containerService interface {
 }
 
 type imageService interface {
+	Delete(context.Context, string) error
 	List(context.Context, ...image.ListFilter) ([]image.Image, error)
 	Pull(context.Context, string, image.PullProgressFunc) (image.Image, error)
 }
