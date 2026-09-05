@@ -9,19 +9,30 @@ import (
 	"github.com/fedebram/hambo/internal/image"
 )
 
+func (srv *server) deleteImageHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	if err := srv.imageService.Delete(r.Context(), name); err != nil {
+		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
+		srv.writeErrorJSON(w, http.StatusInternalServerError, publicapi.ErrorCodeInternal, "image deletion failed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (srv *server) pullImageHandler(w http.ResponseWriter, r *http.Request) {
 	var input publicapi.PullImageRequest
 	if !srv.readJSON(w, r, &input) {
 		return
 	}
 
-	// TODO: reference parser and writejsonerror supporting validation err
-	if strings.TrimSpace(input.Reference) == "" {
+	// TODO: name parser and writejsonerror supporting validation err
+	if strings.TrimSpace(input.Name) == "" {
 		srv.writeJSON(w, http.StatusUnprocessableEntity, publicapi.ErrorResponse{
 			Code:    publicapi.ErrorCodeValidationFailed,
 			Message: "request validation failed",
 			Fields: map[string]string{
-				"reference": "must be provided",
+				"name": "must be provided",
 			},
 		})
 		return
@@ -47,7 +58,7 @@ func (srv *server) pullImageHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := srv.imageService.Pull(ctx, input.Reference, func(progress image.PullProgress) {
+	result, err := srv.imageService.Pull(ctx, input.Name, func(progress image.PullProgress) {
 		writeEvent(publicapi.ImagePullEvent{
 			Type:         "progress",
 			Status:       progress.Event,
@@ -84,7 +95,7 @@ func (srv *server) pullImageHandler(w http.ResponseWriter, r *http.Request) {
 	writeEvent(publicapi.ImagePullEvent{
 		Type: "complete",
 		Image: publicapi.Image{
-			Reference: result.Reference,
+			Name:      result.Name,
 			Digest:    result.Digest,
 			SizeBytes: result.SizeBytes,
 		},
@@ -94,8 +105,8 @@ func (srv *server) pullImageHandler(w http.ResponseWriter, r *http.Request) {
 func (srv *server) listImagesHandler(w http.ResponseWriter, r *http.Request) {
 	var filters []image.ListFilter
 	// TODO: improve filtering
-	if reference := r.URL.Query().Get("reference"); reference != "" {
-		filters = append(filters, image.ByReference(reference))
+	if name := r.URL.Query().Get("name"); name != "" {
+		filters = append(filters, image.ByName(name))
 	}
 
 	images, err := srv.imageService.List(r.Context(), filters...)
@@ -114,7 +125,7 @@ func (srv *server) listImagesHandler(w http.ResponseWriter, r *http.Request) {
 	response := make([]publicapi.Image, 0, len(images))
 	for _, image := range images {
 		response = append(response, publicapi.Image{
-			Reference: image.Reference,
+			Name:      image.Name,
 			Digest:    image.Digest,
 			SizeBytes: image.SizeBytes,
 		})

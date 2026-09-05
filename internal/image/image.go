@@ -1,7 +1,7 @@
 package image
 
 type Image struct {
-	Reference string `json:"reference"`
+	Name      string `json:"name"`
 	Digest    string `json:"digest"`
 	SizeBytes int64  `json:"size_bytes"`
 }
