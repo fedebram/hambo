@@ -1,109 +1,54 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 
-	"github.com/fedebram/hambo/api"
-	hamboclient "github.com/fedebram/hambo/client"
+	"github.com/fedebram/hambo/cli"
 )
 
-const defaultAddress = "http://127.0.0.1:8080"
-
-type app struct {
-	client *hamboclient.Client
-	stdout io.Writer
-	stderr io.Writer
-}
-
 func main() {
-	ctx, stop := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-	defer stop()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
 
-	client, err := hamboclient.NewClient(defaultAddress, &http.Client{})
+func run(args []string, out, errOut io.Writer) int {
+	rootCmd := newRootCommand()
+
+	err := rootCmd.Execute(args, out)
 	if err == nil {
-		app := app{
-			client: client,
-			stdout: os.Stdout,
-			stderr: os.Stderr,
+		return 0
+	}
+
+	fmt.Fprintln(errOut, "Error:", err)
+
+	var usageErr *cli.UsageError
+	if errors.As(err, &usageErr) {
+		fmt.Fprintln(errOut)
+		fmt.Fprintf(
+			errOut,
+			"See '%s -h' for help.\n",
+			usageErr.CommandPath(),
+		)
+		return 2
+	}
+
+	return 1
+}
+
+func newRootCommand() *cli.Command {
+	rootCmd := cli.NewCommand("hambo", "Manage containers and images")
+	helloCmd := cli.NewCommand("hello", "Print a greeting")
+
+	helloCmd.Run = func(args []string, out io.Writer) error {
+		if len(args) != 0 {
+			return cli.UsageErrorf("unexpected argument %q", args[0])
 		}
-		err = app.run(ctx, os.Args[1:])
+		fmt.Fprintln(out, "hello hambo")
+		return nil
 	}
 
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "hambo:", err)
-		os.Exit(1)
-	}
-}
-
-func (app *app) run(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return app.printUsage()
-	}
-
-	switch args[0] {
-	case "help", "-h", "--help":
-		return app.printUsage()
-	case "health":
-		return app.runHealth(ctx, args[1:])
-	case "create":
-		return app.runCreate(ctx, args[1:])
-	default:
-		return fmt.Errorf("unknown command %q", args[0])
-	}
-}
-
-func (app *app) runHealth(ctx context.Context, args []string) error {
-	if len(args) != 0 {
-		return errors.New("usage: hambo health")
-	}
-
-	health, err := app.client.Health(ctx)
-	if err != nil {
-		return fmt.Errorf("check daemon health: %w", err)
-	}
-
-	if _, err := fmt.Fprintln(app.stdout, health.Status); err != nil {
-		return fmt.Errorf("write health output: %w", err)
-	}
-
-	return nil
-}
-
-func (app *app) runCreate(ctx context.Context, args []string) error {
-	if len(args) != 2 {
-		return errors.New("usage: hambo create NAME IMAGE")
-	}
-
-	container, err := app.client.CreateContainer(ctx, api.CreateContainerRequest{
-		Name:  args[0],
-		Image: args[1],
-	})
-	if err != nil {
-		return fmt.Errorf("create container: %w", err)
-	}
-
-	if _, err := fmt.Fprintln(app.stdout, container.Name); err != nil {
-		return fmt.Errorf("write create output: %w", err)
-	}
-
-	return nil
-}
-
-func (app *app) printUsage() error {
-	if _, err := fmt.Fprint(app.stdout, "Usage:\n  hambo health\n  hambo create NAME IMAGE\n"); err != nil {
-		return fmt.Errorf("write usage: %w", err)
-	}
-
-	return nil
+	rootCmd.AddCommand(helloCmd)
+	return rootCmd
 }
