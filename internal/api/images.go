@@ -2,23 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	publicapi "github.com/fedebram/hambo/api"
+	"github.com/fedebram/hambo/errdefs"
 	"github.com/fedebram/hambo/internal/image"
 )
-
-func (srv *server) deleteImageHandler(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-
-	if err := srv.imageService.Delete(r.Context(), name); err != nil {
-		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
-		srv.writeErrorJSON(w, http.StatusInternalServerError, publicapi.ErrorCodeInternal, "image deletion failed")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
 
 func (srv *server) pullImageHandler(w http.ResponseWriter, r *http.Request) {
 	var input publicapi.PullImageRequest
@@ -26,14 +17,18 @@ func (srv *server) pullImageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: name parser and writejsonerror supporting validation err
-	if strings.TrimSpace(input.Name) == "" {
-		srv.writeJSON(w, http.StatusUnprocessableEntity, publicapi.ErrorResponse{
-			Code:    publicapi.ErrorCodeValidationFailed,
-			Message: "request validation failed",
-			Fields: map[string]string{
-				"name": "must be provided",
-			},
+	if strings.TrimSpace(input.Reference) == "" {
+		srv.writeValidationErrorJSON(w, map[string]string{
+			"reference": "must be provided",
+		})
+		return
+	}
+
+	// we need to check here because once we start the stream the http status code is 200.
+	reference, err := image.NormalizeReference(input.Reference)
+	if err != nil {
+		srv.writeValidationErrorJSON(w, map[string]string{
+			"reference": "must be a valid image reference",
 		})
 		return
 	}
@@ -49,69 +44,119 @@ func (srv *server) pullImageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	requestCtx := r.Context()
+	pullCtx, cancelPull := context.WithCancel(requestCtx)
+	defer cancelPull()
 
-	writeEvent := func(event publicapi.ImagePullEvent) {
-		if err := stream.Write(event); err != nil {
-			cancel()
-		}
-	}
-
-	result, err := srv.imageService.Pull(ctx, input.Name, func(progress image.PullProgress) {
-		writeEvent(publicapi.ImagePullEvent{
-			Type:         "progress",
-			Status:       progress.Event,
-			Name:         progress.Name,
-			Digest:       progress.Digest,
-			CurrentBytes: progress.CurrentBytes,
-			TotalBytes:   progress.TotalBytes,
-		})
-	})
-
-	// TODO: refactor error handling
-
-	if r.Context().Err() != nil {
-		return
-	}
-
-	if err := stream.Err(); err != nil {
-		srv.logger.Error("could not write image pull stream", "error", err)
-		return
-	}
-
-	if err != nil {
-		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
-		writeEvent(publicapi.ImagePullEvent{
-			Type: "error",
-			Error: publicapi.ErrorResponse{
-				Code:    publicapi.ErrorCodeInternal,
-				Message: "image pull failed",
-			},
-		})
-		return
-	}
-
-	writeEvent(publicapi.ImagePullEvent{
-		Type: "complete",
-		Image: publicapi.Image{
-			Name:      result.Name,
-			Digest:    result.Digest,
-			SizeBytes: result.SizeBytes,
+	digest, pullErr := srv.imageService.Pull(
+		pullCtx,
+		reference,
+		func(progress image.PullProgress) {
+			event := newImagePullProgressEvent(progress)
+			if writeErr := stream.Write(event); writeErr != nil {
+				cancelPull()
+			}
 		},
-	})
+	)
+
+	if writeErr := stream.Err(); writeErr != nil {
+		if requestCtx.Err() == nil {
+			srv.logger.Error(
+				"could not write image pull stream",
+				"error", writeErr,
+				"reference", reference,
+				"method", r.Method,
+				"uri", r.URL.RequestURI(),
+			)
+		}
+		return
+	}
+
+	if pullErr != nil {
+		requestErr := requestCtx.Err()
+		if requestErr != nil {
+			if !errors.Is(pullErr, requestErr) {
+				srv.logger.Error(
+					pullErr.Error(),
+					"reference", reference,
+					"method", r.Method,
+					"uri", r.URL.RequestURI(),
+				)
+			}
+			return
+		}
+
+		if writeErr := stream.Write(
+			newImagePullErrorEvent(reference, pullErr),
+		); writeErr != nil {
+			srv.logger.Error(
+				"could not write image pull error event",
+				"error", writeErr,
+				"reference", reference,
+				"method", r.Method,
+				"uri", r.URL.RequestURI(),
+			)
+		}
+		return
+	}
+
+	if requestCtx.Err() != nil {
+		return
+	}
+
+	if writeErr := stream.Write(
+		newImagePullCompletedEvent(reference, digest),
+	); writeErr != nil && requestCtx.Err() == nil {
+		srv.logger.Error(
+			"could not write image pull completion event",
+			"error", writeErr,
+			"reference", reference,
+			"method", r.Method,
+			"uri", r.URL.RequestURI(),
+		)
+	}
+}
+
+func newImagePullProgressEvent(progress image.PullProgress) publicapi.ImagePullEvent {
+	return publicapi.ImagePullEvent{
+		Type:         "progress",
+		Status:       progress.Event,
+		Item:         progress.Name,
+		Digest:       progress.Digest,
+		CurrentBytes: progress.CurrentBytes,
+		TotalBytes:   progress.TotalBytes,
+	}
+}
+
+func newImagePullCompletedEvent(reference, digest string) publicapi.ImagePullEvent {
+	return publicapi.ImagePullEvent{
+		Type:      "completed",
+		Reference: reference,
+		Digest:    digest,
+	}
+}
+
+func newImagePullErrorEvent(reference string, pullErr error) publicapi.ImagePullEvent {
+	return publicapi.ImagePullEvent{
+		Type:      "error",
+		Reference: reference,
+		Error: publicapi.ErrorResponse{
+			Code:    publicapi.ErrorCodeImagePullFailed,
+			Message: pullErr.Error(),
+		},
+	}
 }
 
 func (srv *server) listImagesHandler(w http.ResponseWriter, r *http.Request) {
-	var filters []image.ListFilter
-	// TODO: improve filtering
-	if name := r.URL.Query().Get("name"); name != "" {
-		filters = append(filters, image.ByName(name))
-	}
+	ctx := r.Context()
 
-	images, err := srv.imageService.List(r.Context(), filters...)
-	// TODO: better error handling. ctx err?
+	summaries, err := srv.imageService.List(ctx)
 	if err != nil {
+		requestErr := ctx.Err()
+		if requestErr != nil && errors.Is(err, requestErr) {
+			return
+		}
+
 		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
 		srv.writeErrorJSON(
 			w,
@@ -122,14 +167,78 @@ func (srv *server) listImagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := make([]publicapi.Image, 0, len(images))
-	for _, image := range images {
-		response = append(response, publicapi.Image{
-			Name:      image.Name,
-			Digest:    image.Digest,
-			SizeBytes: image.SizeBytes,
+	srv.writeJSON(w, http.StatusOK, newListImagesResponse(summaries))
+}
+
+func newListImagesResponse(summaries []image.Summary) publicapi.ListImagesResponse {
+	images := make([]publicapi.ImageSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		images = append(images, publicapi.ImageSummary{
+			Repository: summary.Repository,
+			Tag:        summary.Tag,
+			Digest:     summary.Digest,
+			SizeBytes:  summary.Size,
 		})
 	}
 
-	srv.writeJSON(w, http.StatusOK, response)
+	return publicapi.ListImagesResponse{Images: images}
+}
+
+func (srv *server) deleteImageHandler(w http.ResponseWriter, r *http.Request) {
+	var input publicapi.DeleteImageRequest
+	if !srv.readJSON(w, r, &input) {
+		return
+	}
+
+	selector := strings.TrimSpace(input.Selector)
+	if selector == "" {
+		srv.writeValidationErrorJSON(w, map[string]string{
+			"selector": "must be provided",
+		})
+		return
+	}
+
+	ctx := r.Context()
+	result, err := srv.imageService.Delete(ctx, selector)
+	if err != nil {
+		requestErr := ctx.Err()
+		if requestErr != nil && errors.Is(err, requestErr) {
+			return
+		}
+		if errors.Is(err, errdefs.ErrInvalidArgument) {
+			srv.writeValidationErrorJSON(w, map[string]string{
+				"selector": "must be a valid and unambiguous image selector",
+			})
+			return
+		}
+		if errors.Is(err, errdefs.ErrNotFound) {
+			srv.writeErrorJSON(
+				w,
+				http.StatusNotFound,
+				publicapi.ErrorCodeNotFound,
+				"image not found",
+			)
+			return
+		}
+		if errors.Is(err, errdefs.ErrOperationNotAllowed) {
+			srv.writeErrorJSON(
+				w,
+				http.StatusConflict,
+				publicapi.ErrorCodeOperationNotAllowed,
+				err.Error(),
+			)
+			return
+		}
+
+		srv.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
+		srv.writeErrorJSON(
+			w,
+			http.StatusInternalServerError,
+			publicapi.ErrorCodeInternal,
+			"internal server error",
+		)
+		return
+	}
+
+	srv.writeJSON(w, http.StatusOK, result)
 }

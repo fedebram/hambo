@@ -18,9 +18,9 @@ type containerService interface {
 }
 
 type imageService interface {
-	Delete(context.Context, string) error
-	List(context.Context, ...image.ListFilter) ([]image.Image, error)
-	Pull(context.Context, string, image.PullProgressFunc) (image.Image, error)
+	List(context.Context) ([]image.Summary, error)
+	Pull(context.Context, string, image.PullProgressFunc) (string, error)
+	Delete(context.Context, string) (image.DeleteResult, error)
 }
 
 type server struct {

@@ -9,24 +9,33 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
-type Image struct {
-	Name      string `json:"name"`
-	Digest    string `json:"digest"`
-	SizeBytes int64  `json:"size_bytes"`
+type ImageSummary struct {
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+	Digest     string `json:"digest"`
+	SizeBytes  int64  `json:"size_bytes"`
+}
+
+type ListImagesResponse struct {
+	Images []ImageSummary `json:"images"`
 }
 
 type PullImageRequest struct {
-	Name string `json:"name"`
+	Reference string `json:"reference"`
+}
+
+type DeleteImageRequest struct {
+	Selector string `json:"selector"`
 }
 
 type ImagePullEvent struct {
 	Type         string        `json:"type"`
 	Status       string        `json:"status,omitempty"`
-	Name         string        `json:"name,omitempty"`
+	Item         string        `json:"item,omitempty"`
+	Reference    string        `json:"reference,omitempty"`
 	Digest       string        `json:"digest,omitempty"`
 	CurrentBytes int64         `json:"current_bytes,omitempty"`
 	TotalBytes   int64         `json:"total_bytes,omitempty"`
-	Image        Image         `json:"image,omitzero"`
 	Error        ErrorResponse `json:"error,omitzero"`
 }
 
@@ -46,6 +55,7 @@ const (
 	ErrorCodeAlreadyExists        = "already_exists"
 	ErrorCodeOperationNotAllowed  = "operation_not_allowed"
 	ErrorCodeInternal             = "internal_error"
+	ErrorCodeImagePullFailed      = "image_pull_failed"
 	ErrorCodeValidationFailed     = "validation_failed"
 	ErrorCodeInvalidJSON          = "invalid_json"
 	ErrorCodeUnsupportedMediaType = "unsupported_media_type"

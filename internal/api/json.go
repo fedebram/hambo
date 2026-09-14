@@ -121,3 +121,11 @@ func (srv *server) writeErrorJSON(w http.ResponseWriter, statusCode int, code, m
 		Message: message,
 	})
 }
+
+func (srv *server) writeValidationErrorJSON(w http.ResponseWriter, fields map[string]string) {
+	srv.writeJSON(w, http.StatusUnprocessableEntity, publicapi.ErrorResponse{
+		Code:    publicapi.ErrorCodeValidationFailed,
+		Message: "request validation failed",
+		Fields:  fields,
+	})
+}
