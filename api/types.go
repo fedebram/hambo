@@ -28,6 +28,11 @@ type DeleteImageRequest struct {
 	Selector string `json:"selector"`
 }
 
+type DeleteImageResponse struct {
+	RemovedReference string `json:"removed_reference,omitempty"`
+	RemovedImage     string `json:"removed_image,omitempty"`
+}
+
 type ImagePullEvent struct {
 	Type         string        `json:"type"`
 	Status       string        `json:"status,omitempty"`

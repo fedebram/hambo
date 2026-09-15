@@ -240,5 +240,8 @@ func (srv *server) deleteImageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv.writeJSON(w, http.StatusOK, result)
+	srv.writeJSON(w, http.StatusOK, publicapi.DeleteImageResponse{
+		RemovedReference: result.RemovedReference,
+		RemovedImage:     result.RemovedImage,
+	})
 }
