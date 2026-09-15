@@ -11,9 +11,11 @@ require (
 	github.com/containerd/typeurl/v2 v2.2.3
 	github.com/containernetworking/cni v1.3.0
 	github.com/distribution/reference v0.6.0
+	github.com/docker/go-units v0.5.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	go.etcd.io/bbolt v1.5.0
+	golang.org/x/term v0.46.0
 )
 
 require (
@@ -55,7 +57,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260406210006-6f92a3bedf2d // indirect
 	google.golang.org/grpc v1.80.0 // indirect

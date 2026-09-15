@@ -58,6 +58,12 @@ type PullProgressFunc func(PullProgress)
 // New references to the same image. When no more references are present pointing to the same image then there is a dangling image
 // that internally is represented by the internal record we create.
 
+// TODO: when pulling the transfer service creates a lease on the underyling content.
+//       if we context cancel the pull, the lease over this content remains for 24 hours.
+//       if we "resume" the pull, then on image listing we can see the resource and this is really nice.
+//       But if we chose then to delete the image, the content remains because of the old lease that it is not get cleaned.
+//       We need handle somehow leases... This behaviour doesn't happens on a successful pull because containerd delete the lease once the pull succeed.
+
 func (s *Service) Pull(
 	ctx context.Context,
 	name string,
