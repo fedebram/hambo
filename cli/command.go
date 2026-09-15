@@ -1,19 +1,24 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 )
 
-type RunFunc func(args []string, out io.Writer) error
+type RunFunc func(ctx context.Context, args []string, out, errOut io.Writer) error
+
+type ArgsValidator func(args []string) error
 
 type Command struct {
-	name        string
-	description string
-	Run         RunFunc
-	subcommands []*Command
+	name         string
+	description  string
+	ArgsUsage    string
+	ValidateArgs ArgsValidator
+	Run          RunFunc
+	subcommands  []*Command
 }
 
 func NewCommand(name, description string) *Command {
@@ -27,17 +32,19 @@ func (c *Command) AddCommand(commands ...*Command) {
 	c.subcommands = append(c.subcommands, commands...)
 }
 
-func (c *Command) Execute(args []string, out io.Writer) error {
-	return c.execute(args, out, []string{c.name})
+func (c *Command) Execute(ctx context.Context, args []string, out, errOut io.Writer) error {
+	return c.execute(ctx, args, out, errOut, []string{c.name})
 }
 
-func (c *Command) execute(args []string, out io.Writer, path []string) error {
+func (c *Command) execute(ctx context.Context, args []string, out, errOut io.Writer, path []string) error {
 	if len(args) > 0 {
 		for _, subcommand := range c.subcommands {
 			if args[0] == subcommand.name {
 				return subcommand.execute(
+					ctx,
 					args[1:],
 					out,
+					errOut,
 					append(path, subcommand.name),
 				)
 			}
@@ -52,16 +59,19 @@ func (c *Command) execute(args []string, out io.Writer, path []string) error {
 	}
 
 	if c.Run != nil {
-		err := c.Run(args, out)
+		if c.ValidateArgs != nil {
+			if err := c.ValidateArgs(args); err != nil {
+				setUsageErrorPath(err, path)
+				return err
+			}
+		}
+
+		err := c.Run(ctx, args, out, errOut)
 		if err == nil {
 			return nil
 		}
 
-		var usageErr *UsageError
-		if errors.As(err, &usageErr) {
-			usageErr.path = path
-		}
-
+		setUsageErrorPath(err, path)
 		return err
 	}
 
@@ -85,7 +95,11 @@ func (c *Command) printHelp(out io.Writer, path []string) {
 	if len(c.subcommands) > 0 {
 		fmt.Fprintf(out, "  %s <command>\n", strings.Join(path, " "))
 	} else {
-		fmt.Fprintf(out, "  %s\n", strings.Join(path, " "))
+		usage := strings.Join(path, " ")
+		if c.ArgsUsage != "" {
+			usage += " " + c.ArgsUsage
+		}
+		fmt.Fprintf(out, "  %s\n", usage)
 	}
 
 	if len(c.subcommands) > 0 {
@@ -100,5 +114,12 @@ func (c *Command) printHelp(out io.Writer, path []string) {
 				subcommand.description,
 			)
 		}
+	}
+}
+
+func setUsageErrorPath(err error, path []string) {
+	var usageErr *UsageError
+	if errors.As(err, &usageErr) {
+		usageErr.path = path
 	}
 }
