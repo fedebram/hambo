@@ -62,27 +62,10 @@ func (c *Client) CreateContainer(ctx context.Context, input api.CreateContainerR
 	return container, err
 }
 
-func (c *Client) DeleteImage(ctx context.Context, name string) error {
-	return c.do(ctx, http.MethodDelete, "images/"+url.PathEscape(name), nil, nil)
-}
-
 func (c *Client) do(ctx context.Context, method, path string, input, output any) error {
-	var requestBody io.Reader
-	if input != nil {
-		body, err := json.Marshal(input)
-		if err != nil {
-			return fmt.Errorf("encode request: %w", err)
-		}
-		requestBody = bytes.NewReader(body)
-	}
-
-	endpoint := c.baseURL.JoinPath(path)
-	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), requestBody)
+	req, err := c.newRequest(ctx, method, path, input)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	if input != nil {
-		req.Header.Set("Content-Type", "application/json")
+		return err
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -91,16 +74,52 @@ func (c *Client) do(ctx context.Context, method, path string, input, output any)
 	}
 	defer resp.Body.Close()
 
+	// HTTP success in the range of 2XX
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return readResponseError(ctx, resp)
+	}
+
 	if output != nil {
 		if err := json.NewDecoder(resp.Body).Decode(output); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			return fmt.Errorf("decode response: %w", err)
 		}
 	}
 
-	// I wonder if can be done better or in a different manner...
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		return fmt.Errorf("finish reading response: %w", err)
+	return drainResponseBody(ctx, resp.Body)
+}
+
+func (c *Client) newRequest(ctx context.Context, method string, path string, input any) (*http.Request, error) {
+	var requestBody io.Reader
+	if input != nil {
+		body, err := json.Marshal(input)
+		if err != nil {
+			return nil, fmt.Errorf("encode request: %w", err)
+		}
+		requestBody = bytes.NewReader(body)
 	}
 
+	endpoint := c.baseURL.JoinPath(path)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	if input != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	return req, nil
+}
+
+func drainResponseBody(ctx context.Context, body io.Reader) error {
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		drainErr := fmt.Errorf("drain response body: %w", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return drainErr
+	}
 	return nil
 }
