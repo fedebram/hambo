@@ -43,7 +43,7 @@ func newRootCommand() *cobra.Command {
 		Short: "Fetch an OCI manifest",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			registryHost, repository, ref, err := registry.ParseImageReference(args[0])
+			ref, err := registry.ParseImageReference(args[0])
 			if err != nil {
 				return err
 			}
@@ -51,7 +51,7 @@ func newRootCommand() *cobra.Command {
 				Timeout: 30 * time.Second,
 			}
 
-			manifest, err := registry.FetchManifest(httpClient, registryHost, repository, ref)
+			manifest, err := registry.FetchManifest(httpClient, ref)
 			if err != nil {
 				return err
 			}
