@@ -14,6 +14,7 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
+	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/term v0.46.0
 )
@@ -34,6 +35,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/moby/locker v1.0.1 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
@@ -49,6 +51,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sasha-s/go-deadlock v0.3.5 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0 // indirect

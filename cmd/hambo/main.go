@@ -2,20 +2,15 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/signal"
-	"sort"
 	"syscall"
+	"time"
 
-	"github.com/fedebram/hambo/cli"
-	hamboclient "github.com/fedebram/hambo/client"
+	"github.com/fedebram/hambo/internal/registry"
+	"github.com/spf13/cobra"
 )
-
-const defaultDaemonURL = "http://127.0.0.1:8080"
 
 func main() {
 	ctx, stop := signal.NotifyContext(
@@ -23,61 +18,48 @@ func main() {
 		os.Interrupt,
 		syscall.SIGTERM,
 	)
-	defer stop()
-
-	apiClient, err := hamboclient.NewClient(defaultDaemonURL, http.DefaultClient)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
-	}
-
-	os.Exit(run(ctx, apiClient, os.Args[1:], os.Stdout, os.Stderr))
+	code := run(ctx)
+	stop()
+	os.Exit(code)
 }
 
-func run(ctx context.Context, client imageClient, args []string, out, errOut io.Writer) int {
-	rootCmd := newRootCommand(client)
+func run(ctx context.Context) int {
+	rootCmd := newRootCommand()
 
-	err := rootCmd.Execute(ctx, args, out, errOut)
-	if err == nil {
-		return 0
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		return 1
 	}
-
-	fmt.Fprintln(errOut, "Error:", err)
-	printResponseErrorFields(errOut, err)
-
-	var usageErr *cli.UsageError
-	if errors.As(err, &usageErr) {
-		fmt.Fprintln(errOut)
-		fmt.Fprintf(
-			errOut,
-			"See '%s -h' for help.\n",
-			usageErr.CommandPath(),
-		)
-		return 2
-	}
-
-	return 1
+	return 0
 }
 
-func printResponseErrorFields(out io.Writer, err error) {
-	var responseErr *hamboclient.ResponseError
-	if !errors.As(err, &responseErr) {
-		return
+func newRootCommand() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "hambo",
+		Short: "Manage containers and images",
 	}
 
-	fields := make([]string, 0, len(responseErr.Fields))
-	for field := range responseErr.Fields {
-		fields = append(fields, field)
-	}
-	sort.Strings(fields)
+	root.AddCommand(&cobra.Command{
+		Use:   "fetch <reference>",
+		Short: "Fetch an OCI manifest",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			registryHost, repository, ref, err := registry.ParseImageReference(args[0])
+			if err != nil {
+				return err
+			}
+			httpClient := &http.Client{
+				Timeout: 30 * time.Second,
+			}
 
-	for _, field := range fields {
-		fmt.Fprintf(out, "  %s: %s\n", field, responseErr.Fields[field])
-	}
-}
+			manifest, err := registry.FetchManifest(httpClient, registryHost, repository, ref)
+			if err != nil {
+				return err
+			}
 
-func newRootCommand(client imageClient) *cli.Command {
-	rootCmd := cli.NewCommand("hambo", "Manage containers and images")
-	rootCmd.AddCommand(newImageCommand(client))
-	return rootCmd
+			_, err = cmd.OutOrStdout().Write(manifest)
+			return err
+		},
+	})
+
+	return root
 }
