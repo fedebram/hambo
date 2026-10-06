@@ -89,10 +89,10 @@ func newRootCommand() *cobra.Command {
 			}
 
 			httpClient := &http.Client{
-				Timeout: 30 * time.Second,
+				Timeout: 5 * time.Minute,
 			}
 
-			target, err := image.Pull(httpClient, store, ref)
+			target, err := image.Pull(httpClient, store, ref, cmd.OutOrStderr())
 			if err != nil {
 				return err
 			}

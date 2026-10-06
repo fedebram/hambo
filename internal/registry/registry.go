@@ -147,6 +147,43 @@ func FetchManifest(httpClient *http.Client, imageRef reference.Named) (ManifestR
 	return result, nil
 }
 
+func FetchBlob(httpClient *http.Client, imageRef reference.Named, d digest.Digest) (io.ReadCloser, error) {
+	if err := d.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid blob digest: %w", err)
+	}
+
+	registryHost := reference.Domain(imageRef)
+	repository := reference.Path(imageRef)
+
+	if registryHost == "docker.io" {
+		registryHost = "registry-1.docker.io"
+	}
+
+	u := url.URL{
+		Scheme: "https",
+		Host:   registryHost,
+		Path:   "/v2/" + repository + "/blobs/" + d.String(),
+	}
+
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("fetch blob %s: %s", d, resp.Status)
+	}
+
+	// The caller owns this body and must close it.
+	return resp.Body, nil
+}
+
 func ParseImageReference(value string) (reference.Named, error) {
 	named, err := reference.ParseNamed(value)
 	if err != nil {
