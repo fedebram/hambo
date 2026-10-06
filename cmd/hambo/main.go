@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/fedebram/hambo/internal/blobstore"
 	"github.com/fedebram/hambo/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -43,6 +45,10 @@ func newRootCommand() *cobra.Command {
 		Short: "Fetch an OCI manifest",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := blobstore.New("./data/content")
+			if err != nil {
+				return err
+			}
 			ref, err := registry.ParseImageReference(args[0])
 			if err != nil {
 				return err
@@ -56,7 +62,11 @@ func newRootCommand() *cobra.Command {
 				return err
 			}
 
-			_, err = cmd.OutOrStdout().Write(manifest)
+			d, err := store.PutBytes(manifest)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), d)
 			return err
 		},
 	})
