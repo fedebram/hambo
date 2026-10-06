@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fedebram/hambo/internal/blobstore"
+	"github.com/fedebram/hambo/internal/image"
 	"github.com/fedebram/hambo/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -45,11 +46,12 @@ func newRootCommand() *cobra.Command {
 		Short: "Fetch an OCI manifest",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := blobstore.New("./data/content")
+			ref, err := registry.ParseImageReference(args[0])
 			if err != nil {
 				return err
 			}
-			ref, err := registry.ParseImageReference(args[0])
+
+			store, err := blobstore.New("./data/content")
 			if err != nil {
 				return err
 			}
@@ -71,5 +73,33 @@ func newRootCommand() *cobra.Command {
 		},
 	})
 
+	root.AddCommand(&cobra.Command{
+		Use:   "pull <reference>",
+		Short: "Pull an OCI image",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref, err := registry.ParseImageReference(args[0])
+			if err != nil {
+				return err
+			}
+
+			store, err := blobstore.New("./data/content")
+			if err != nil {
+				return err
+			}
+
+			httpClient := &http.Client{
+				Timeout: 30 * time.Second,
+			}
+
+			target, err := image.Pull(httpClient, store, ref)
+			if err != nil {
+				return err
+			}
+
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), target.Digest)
+			return err
+		},
+	})
 	return root
 }
