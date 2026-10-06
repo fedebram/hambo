@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -92,8 +93,24 @@ func newRootCommand() *cobra.Command {
 				Timeout: 5 * time.Minute,
 			}
 
-			target, err := image.Pull(httpClient, store, ref, cmd.OutOrStderr())
+			// pulling progress to stderr
+			target, err := image.Pull(httpClient, store, ref, cmd.ErrOrStderr())
 			if err != nil {
+				return err
+			}
+
+			metadataStore, err := image.Open("./data/metadata.db")
+			if err != nil {
+				return err
+			}
+
+			saveErr := metadataStore.Save(image.Image{
+				Name:       ref.String(),
+				Descriptor: target,
+			})
+			closeErr := metadataStore.Close()
+
+			if err := errors.Join(saveErr, closeErr); err != nil {
 				return err
 			}
 
