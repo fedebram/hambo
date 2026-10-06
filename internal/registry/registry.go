@@ -10,13 +10,21 @@ import (
 	"net/url"
 
 	"github.com/distribution/reference"
+	"github.com/opencontainers/go-digest"
 	ociv1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 const dockerMediaTypeManifestList = "application/vnd.docker.distribution.manifest.list.v2+json"
 const dockerMediaTypeManifest = "application/vnd.docker.distribution.manifest.v2+json"
 
-func FetchManifest(httpClient *http.Client, imageRef reference.Named) ([]byte, error) {
+type ManifestResponse struct {
+	Content    []byte
+	Descriptor ociv1.Descriptor
+	Manifest   *ociv1.Manifest
+	Index      *ociv1.Index
+}
+
+func FetchManifest(httpClient *http.Client, imageRef reference.Named) (ManifestResponse, error) {
 	registryHost := reference.Domain(imageRef)
 	repository := reference.Path(imageRef)
 
@@ -27,7 +35,7 @@ func FetchManifest(httpClient *http.Client, imageRef reference.Named) ([]byte, e
 	case reference.Tagged:
 		ref = r.Tag()
 	default:
-		return nil, fmt.Errorf("image reference must include a tag or digest")
+		return ManifestResponse{}, fmt.Errorf("image reference must include a tag or digest")
 	}
 
 	if registryHost == "docker.io" {
@@ -41,7 +49,7 @@ func FetchManifest(httpClient *http.Client, imageRef reference.Named) ([]byte, e
 	}
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, err
+		return ManifestResponse{}, err
 	}
 	//github.com/opencontainers/image-spec/blob/v1.1.1/media-types.md#compatibility-matrix
 	req.Header.Set("Accept",
@@ -52,23 +60,23 @@ func FetchManifest(httpClient *http.Client, imageRef reference.Named) ([]byte, e
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return ManifestResponse{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch manifest: %s", resp.Status)
+		return ManifestResponse{}, fmt.Errorf("fetch manifest: %s", resp.Status)
 	}
 
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
-		return nil, fmt.Errorf("manifest response is missing Content-Type")
+		return ManifestResponse{}, fmt.Errorf("manifest response is missing Content-Type")
 	}
 
 	// following oci distribution spec we ignore paramaters.
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil && err != mime.ErrInvalidMediaParameter {
-		return nil, fmt.Errorf("invalid manifest Content-Type: %w", err)
+		return ManifestResponse{}, fmt.Errorf("invalid manifest Content-Type: %w", err)
 	}
 
 	switch mediaType {
@@ -77,26 +85,35 @@ func FetchManifest(httpClient *http.Client, imageRef reference.Named) ([]byte, e
 		dockerMediaTypeManifestList,
 		dockerMediaTypeManifest:
 	default:
-		return nil, fmt.Errorf("unsupported manifest media type %q", mediaType)
+		return ManifestResponse{}, fmt.Errorf("unsupported manifest media type %q", mediaType)
 	}
 
-	manifest, err := io.ReadAll(resp.Body)
+	content, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return ManifestResponse{}, err
 	}
 
 	// oci distribution spec:
 	// "..If the <tag-or-digest> part of a manifest request is a digest, clients SHOULD verify the returned manifest matches this digest."
 	if r, ok := imageRef.(reference.Digested); ok {
 		expected := r.Digest()
-		actual := expected.Algorithm().FromBytes(manifest)
+		actual := expected.Algorithm().FromBytes(content)
 
 		if actual != expected {
-			return nil, fmt.Errorf(
+			return ManifestResponse{}, fmt.Errorf(
 				"manifest digest mismatch: expected %s, got %s",
 				expected, actual,
 			)
 		}
+	}
+
+	result := ManifestResponse{
+		Content: content,
+		Descriptor: ociv1.Descriptor{
+			MediaType: mediaType,
+			Digest:    digest.FromBytes(content),
+			Size:      int64(len(content)),
+		},
 	}
 
 	var documentMediaType string
@@ -104,28 +121,30 @@ func FetchManifest(httpClient *http.Client, imageRef reference.Named) ([]byte, e
 	switch mediaType {
 	case ociv1.MediaTypeImageManifest, dockerMediaTypeManifest:
 		var parsed ociv1.Manifest
-		if err := json.Unmarshal(manifest, &parsed); err != nil {
-			return nil, fmt.Errorf("decoding image manifest: %w", err)
+		if err := json.Unmarshal(content, &parsed); err != nil {
+			return ManifestResponse{}, fmt.Errorf("decoding image manifest: %w", err)
 		}
+		result.Manifest = &parsed
 		documentMediaType = parsed.MediaType
 
 	case ociv1.MediaTypeImageIndex, dockerMediaTypeManifestList:
 		var parsed ociv1.Index
-		if err := json.Unmarshal(manifest, &parsed); err != nil {
-			return nil, fmt.Errorf("decoding image index: %w", err)
+		if err := json.Unmarshal(content, &parsed); err != nil {
+			return ManifestResponse{}, fmt.Errorf("decoding image index: %w", err)
 		}
+		result.Index = &parsed
 		documentMediaType = parsed.MediaType
 	}
 
 	// according to distribution oci spec we need to check the media type.
 	if documentMediaType != "" && documentMediaType != mediaType {
-		return nil, fmt.Errorf(
+		return ManifestResponse{}, fmt.Errorf(
 			"document mediaType %q does not match Content-Type %q",
 			documentMediaType, mediaType,
 		)
 	}
 
-	return manifest, nil
+	return result, nil
 }
 
 func ParseImageReference(value string) (reference.Named, error) {

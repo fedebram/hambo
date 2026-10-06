@@ -57,12 +57,12 @@ func newRootCommand() *cobra.Command {
 				Timeout: 30 * time.Second,
 			}
 
-			manifest, err := registry.FetchManifest(httpClient, ref)
+			result, err := registry.FetchManifest(httpClient, ref)
 			if err != nil {
 				return err
 			}
 
-			d, err := store.PutBytes(manifest)
+			d, err := store.PutBytes(result.Content)
 			if err != nil {
 				return err
 			}
