@@ -190,5 +190,12 @@ func ParseImageReference(value string) (reference.Named, error) {
 		return nil, fmt.Errorf("parsing image reference %q: %w", value, err)
 	}
 
+	if digested, ok := named.(reference.Digested); ok {
+		return reference.WithDigest(
+			reference.TrimNamed(named),
+			digested.Digest(),
+		)
+	}
+
 	return reference.TagNameOnly(named), nil
 }
