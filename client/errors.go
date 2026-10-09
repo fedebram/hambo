@@ -10,22 +10,20 @@ import (
 	"github.com/fedebram/hambo/errdefs"
 )
 
-type ResponseError struct {
+type Error struct {
 	StatusCode int
-	Code       string
-	Message    string
-	Fields     map[string]string
+	Response   api.ErrorResponse
 	cause      error
 }
 
-func (e *ResponseError) Error() string {
-	if e.Message != "" {
-		return e.Message
+func (e *Error) Error() string {
+	if e.Response.Message != "" {
+		return e.Response.Message
 	}
 	return fmt.Sprintf("request failed with status code %d", e.StatusCode)
 }
 
-func (e *ResponseError) Unwrap() error {
+func (e *Error) Unwrap() error {
 	return e.cause
 }
 
@@ -39,16 +37,10 @@ func decodeResponseError(resp *http.Response) error {
 		)
 	}
 
-	return newResponseError(resp.StatusCode, response)
-}
-
-func newResponseError(statusCode int, response api.ErrorResponse) *ResponseError {
-	return &ResponseError{
-		StatusCode: statusCode,
-		Code:       response.Code,
-		Message:    response.Message,
-		Fields:     response.Fields,
-		cause:      errorFromCode(response.Code),
+	return &Error{
+		StatusCode: resp.StatusCode,
+		Response:   response,
+		cause:      errorFromStatus(resp.StatusCode),
 	}
 }
 
@@ -63,18 +55,26 @@ func readResponseError(ctx context.Context, resp *http.Response) error {
 	return responseErr
 }
 
-func errorFromCode(code string) error {
-	switch code {
-	case api.ErrorCodeNotFound:
-		return errdefs.ErrNotFound
-	case api.ErrorCodeOperationNotAllowed:
-		return errdefs.ErrOperationNotAllowed
-	case api.ErrorCodeValidationFailed,
-		api.ErrorCodeInvalidJSON,
-		api.ErrorCodeUnsupportedMediaType:
+func errorFromStatus(statusCode int) error {
+	switch statusCode {
+	case http.StatusBadRequest,
+		http.StatusUnsupportedMediaType,
+		http.StatusUnprocessableEntity:
 		return errdefs.ErrInvalidArgument
-	case api.ErrorCodeInternal:
+	case http.StatusUnauthorized:
+		return errdefs.ErrUnauthenticated
+	case http.StatusForbidden:
+		return errdefs.ErrPermissionDenied
+	case http.StatusNotFound:
+		return errdefs.ErrNotFound
+	case http.StatusMethodNotAllowed:
+		return errdefs.ErrMethodNotAllowed
+	case http.StatusConflict:
+		return errdefs.ErrConflict
+	case http.StatusInternalServerError:
 		return errdefs.ErrInternal
+	case http.StatusServiceUnavailable:
+		return errdefs.ErrUnavailable
 	default:
 		return nil
 	}

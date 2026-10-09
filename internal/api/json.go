@@ -63,7 +63,6 @@ func (srv *server) readJSON(w http.ResponseWriter, r *http.Request, dst any) boo
 		srv.writeErrorJSON(
 			w,
 			http.StatusUnsupportedMediaType,
-			publicapi.ErrorCodeUnsupportedMediaType,
 			"Content-Type must be application/json",
 		)
 		return false
@@ -75,7 +74,6 @@ func (srv *server) readJSON(w http.ResponseWriter, r *http.Request, dst any) boo
 		srv.writeErrorJSON(
 			w,
 			http.StatusBadRequest,
-			publicapi.ErrorCodeInvalidJSON,
 			"request body contains invalid JSON",
 		)
 		return false
@@ -88,7 +86,6 @@ func (srv *server) readJSON(w http.ResponseWriter, r *http.Request, dst any) boo
 		srv.writeErrorJSON(
 			w,
 			http.StatusBadRequest,
-			publicapi.ErrorCodeInvalidJSON,
 			"request body contains invalid JSON",
 		)
 		return false
@@ -115,16 +112,14 @@ func (srv *server) writeJSON(w http.ResponseWriter, statusCode int, data any) {
 	}
 }
 
-func (srv *server) writeErrorJSON(w http.ResponseWriter, statusCode int, code, message string) {
+func (srv *server) writeErrorJSON(w http.ResponseWriter, statusCode int, message string) {
 	srv.writeJSON(w, statusCode, publicapi.ErrorResponse{
-		Code:    code,
 		Message: message,
 	})
 }
 
 func (srv *server) writeValidationErrorJSON(w http.ResponseWriter, fields map[string]string) {
 	srv.writeJSON(w, http.StatusUnprocessableEntity, publicapi.ErrorResponse{
-		Code:    publicapi.ErrorCodeValidationFailed,
 		Message: "request validation failed",
 		Fields:  fields,
 	})

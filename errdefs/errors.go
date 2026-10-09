@@ -3,8 +3,12 @@ package errdefs
 import "errors"
 
 var (
-	ErrNotFound            = errors.New("not found")
-	ErrInvalidArgument     = errors.New("invalid argument")
-	ErrOperationNotAllowed = errors.New("operation not allowed")
-	ErrInternal            = errors.New("internal error")
+	ErrInvalidArgument  = errors.New("invalid argument")
+	ErrUnauthenticated  = errors.New("unauthenticated")
+	ErrPermissionDenied = errors.New("permission denied")
+	ErrNotFound         = errors.New("not found")
+	ErrMethodNotAllowed = errors.New("method not allowed")
+	ErrConflict         = errors.New("conflict")
+	ErrInternal         = errors.New("internal error")
+	ErrUnavailable      = errors.New("unavailable")
 )

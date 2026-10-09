@@ -9,18 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/fedebram/hambo/internal/container"
 )
 
-func newTestServer(t *testing.T, serviceOptions ...container.ServiceOption) *server {
+func newTestServer(t *testing.T) *server {
 	t.Helper()
 
-	store := container.NewMemoryStore()
-	queue := container.NewMemoryQueue()
-	service := container.NewService(store, queue, serviceOptions...)
-
-	return newServer(service, WithLogger(slog.New(slog.DiscardHandler)))
+	return newServer(WithLogger(slog.New(slog.DiscardHandler)))
 }
 
 func makeRequest(t *testing.T, handler http.Handler, method, path string, body any) *httptest.ResponseRecorder {
@@ -99,29 +93,4 @@ func decodeJSON(t *testing.T, r io.Reader, dst any) {
 	if err := json.NewDecoder(r).Decode(dst); err != nil {
 		t.Fatalf("could not decode JSON: %v", err)
 	}
-}
-
-// failingService lets us test how the API handles unexpected service errors.
-type failingService struct {
-	err error
-}
-
-func (s failingService) Create(container.Container) (container.Container, error) {
-	return container.Container{}, s.err
-}
-
-func (s failingService) Get(string) (container.Container, error) {
-	return container.Container{}, s.err
-}
-
-func (s failingService) Start(string) (container.Container, error) {
-	return container.Container{}, s.err
-}
-
-func (s failingService) Stop(string) (container.Container, error) {
-	return container.Container{}, s.err
-}
-
-func (s failingService) Delete(string) (container.Container, error) {
-	return container.Container{}, s.err
 }

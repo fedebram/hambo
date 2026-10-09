@@ -50,14 +50,13 @@ func TestServerReadJSON(t *testing.T) {
 		contentType string
 		input       string
 		wantStatus  int
-		wantCode    string
 		wantMessage string
 	}{
-		{"rejects malformed JSON", "application/json", `{"name":`, http.StatusBadRequest, publicapi.ErrorCodeInvalidJSON, "request body contains invalid JSON"},
-		{"rejects unknown fields", "application/json", `{"name":"hello","extra":true}`, http.StatusBadRequest, publicapi.ErrorCodeInvalidJSON, "request body contains invalid JSON"},
-		{"rejects multiple JSON values", "application/json", `{"name":"hello"}{}`, http.StatusBadRequest, publicapi.ErrorCodeInvalidJSON, "request body contains invalid JSON"},
-		{"rejects a non-JSON content type", "text/plain", `{"name":"hello"}`, http.StatusUnsupportedMediaType, publicapi.ErrorCodeUnsupportedMediaType, "Content-Type must be application/json"},
-		{"rejects a missing content type", "", `{"name":"hello"}`, http.StatusUnsupportedMediaType, publicapi.ErrorCodeUnsupportedMediaType, "Content-Type must be application/json"},
+		{"rejects malformed JSON", "application/json", `{"name":`, http.StatusBadRequest, "request body contains invalid JSON"},
+		{"rejects unknown fields", "application/json", `{"name":"hello","extra":true}`, http.StatusBadRequest, "request body contains invalid JSON"},
+		{"rejects multiple JSON values", "application/json", `{"name":"hello"}{}`, http.StatusBadRequest, "request body contains invalid JSON"},
+		{"rejects a non-JSON content type", "text/plain", `{"name":"hello"}`, http.StatusUnsupportedMediaType, "Content-Type must be application/json"},
+		{"rejects a missing content type", "", `{"name":"hello"}`, http.StatusUnsupportedMediaType, "Content-Type must be application/json"},
 	}
 
 	for _, tt := range invalidTests {
@@ -78,9 +77,6 @@ func TestServerReadJSON(t *testing.T) {
 			var got publicapi.ErrorResponse
 			decodeJSON(t, response.Body, &got)
 
-			if got.Code != tt.wantCode {
-				t.Errorf("got error code %q, want %q", got.Code, tt.wantCode)
-			}
 			if got.Message != tt.wantMessage {
 				t.Errorf("got error message %q, want %q", got.Message, tt.wantMessage)
 			}

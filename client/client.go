@@ -56,12 +56,6 @@ func (c *Client) Health(ctx context.Context) (api.HealthResponse, error) {
 	return health, err
 }
 
-func (c *Client) CreateContainer(ctx context.Context, input api.CreateContainerRequest) (api.Container, error) {
-	var container api.Container
-	err := c.do(ctx, http.MethodPost, "containers", input, &container)
-	return container, err
-}
-
 func (c *Client) do(ctx context.Context, method, path string, input, output any) error {
 	req, err := c.newRequest(ctx, method, path, input)
 	if err != nil {
