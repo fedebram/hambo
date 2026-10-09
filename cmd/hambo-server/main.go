@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +22,7 @@ import (
 const (
 	defaultAddress      = "127.0.0.1:8080"
 	defaultStorePath    = "./data/hambo.db"
+	defaultCAFile       = "./certs/ca.crt"
 	defaultCertFile     = "certs/server.crt"
 	defaultKeyFile      = "certs/server.key"
 	shutdownGracePeriod = 5 * time.Second
@@ -63,6 +66,7 @@ func main() {
 type runConfig struct {
 	listener  net.Listener
 	storePath string
+	caFile    string
 	certFile  string
 	keyFile   string
 }
@@ -100,14 +104,34 @@ func withTLSFiles(certFile, keyFile string) runOption {
 	}
 }
 
+func withCAFile(path string) runOption {
+	if path == "" {
+		panic("hambo server: CA certificate path cannot be empty")
+	}
+
+	return func(cfg *runConfig) {
+		cfg.caFile = path
+	}
+}
+
 func run(ctx context.Context, options ...runOption) (runErr error) {
 	cfg := runConfig{
 		storePath: defaultStorePath,
+		caFile:    defaultCAFile,
 		certFile:  defaultCertFile,
 		keyFile:   defaultKeyFile,
 	}
 	for _, option := range options {
 		option(&cfg)
+	}
+
+	caPEM, err := os.ReadFile(cfg.caFile)
+	if err != nil {
+		return fmt.Errorf("read client CA certificate: %w", err)
+	}
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(caPEM) {
+		return errors.New("client CA file contains no valid PEM certificates")
 	}
 
 	if err := os.MkdirAll(filepath.Dir(cfg.storePath), 0o700); err != nil {
@@ -135,14 +159,18 @@ func run(ctx context.Context, options ...runOption) (runErr error) {
 
 	handler := api.NewServer()
 
-	serverErr := runServer(ctx, listener, handler, shutdownGracePeriod, cfg.certFile, cfg.keyFile)
+	serverErr := runServer(ctx, listener, handler, shutdownGracePeriod, cfg.certFile, cfg.keyFile, clientCAs)
 
 	return serverErr
 }
 
-func runServer(ctx context.Context, listener net.Listener, handler http.Handler, gracePeriod time.Duration, certFile, keyFile string) error {
+func runServer(ctx context.Context, listener net.Listener, handler http.Handler, gracePeriod time.Duration, certFile, keyFile string, clientCAs *x509.CertPool) error {
 	server := &http.Server{
 		Handler: handler,
+		TLSConfig: &tls.Config{
+			ClientCAs:  clientCAs,
+			ClientAuth: tls.RequireAndVerifyClientCert,
+		},
 	}
 
 	serveErrCh := make(chan error, 1)

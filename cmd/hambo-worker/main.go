@@ -15,6 +15,8 @@ import (
 const (
 	defaultServerURL = "https://localhost:8080"
 	defaultCAFile    = "./certs/ca.crt"
+	defaultCertFile  = "./certs/worker.crt"
+	defaultKeyFile   = "./certs/worker.key"
 )
 
 func main() {
@@ -39,6 +41,8 @@ func run(ctx context.Context) int {
 type workerConfig struct {
 	serverURL string
 	caFile    string
+	certFile  string
+	keyFile   string
 }
 
 // we use cobra here because it is just simple and works.
@@ -56,13 +60,15 @@ func newRootCommand() *cobra.Command {
 	}
 	root.Flags().StringVar(&cfg.serverURL, "server", defaultServerURL, "Hambo server URL")
 	root.Flags().StringVar(&cfg.caFile, "ca-cert", defaultCAFile, "Path to the trusted CA certificate in PEM format")
+	root.Flags().StringVar(&cfg.certFile, "client-cert", defaultCertFile, "Path to the worker client certificate in PEM format")
+	root.Flags().StringVar(&cfg.keyFile, "client-key", defaultKeyFile, "Path to the worker private key in PEM format")
 	return root
 }
 
 func runWorker(ctx context.Context, cfg workerConfig) error {
 	slog.Info("starting hambo worker", "server", cfg.serverURL)
 
-	httpClient, err := client.NewHTTPSClient(cfg.caFile)
+	httpClient, err := client.NewMTLSClient(cfg.caFile, cfg.certFile, cfg.keyFile)
 	if err != nil {
 		return err
 	}

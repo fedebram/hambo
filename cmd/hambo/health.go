@@ -13,7 +13,7 @@ func newHealthCommand(cfg *cliConfig) *cobra.Command {
 		Short: "Check the Hambo server's health",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			httpClient, err := client.NewHTTPSClient(cfg.caFile)
+			httpClient, err := client.NewMTLSClient(cfg.caFile, cfg.certFile, cfg.keyFile)
 			if err != nil {
 				return err
 			}
