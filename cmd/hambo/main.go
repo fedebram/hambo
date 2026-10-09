@@ -30,10 +30,20 @@ func run(ctx context.Context) int {
 }
 
 func newRootCommand() *cobra.Command {
+	cfg := cliConfig{}
 	root := &cobra.Command{
 		Use:   "hambo",
 		Short: "Manage containers and images",
 	}
 
+	root.PersistentFlags().StringVar(&cfg.serverURL, "server", "https://localhost:8080", "Hambo server URL")
+	root.PersistentFlags().StringVar(&cfg.caFile, "ca-cert", "./certs/ca.crt", "Path to the trusted CA certificate in PEM format")
+	root.AddCommand(newHealthCommand(&cfg))
+
 	return root
+}
+
+type cliConfig struct {
+	serverURL string
+	caFile    string
 }

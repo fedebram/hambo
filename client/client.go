@@ -32,16 +32,12 @@ func NewClient(baseURL string, httpClient *http.Client) (*Client, error) {
 		return nil, fmt.Errorf("parse base URL: %w", err)
 	}
 
-	if u.Scheme != "http" {
-		return nil, fmt.Errorf("unsupported URL scheme %q", u.Scheme)
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported URL scheme %q: HTTPS required", u.Scheme)
 	}
 
 	if u.Hostname() == "" {
 		return nil, errors.New("base URL must include a hostname")
-	}
-
-	if u.Port() == "" {
-		return nil, errors.New("base URL must include a port")
 	}
 
 	return &Client{

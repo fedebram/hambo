@@ -19,7 +19,9 @@ import (
 
 const (
 	defaultAddress      = "127.0.0.1:8080"
-	defaultStorePath    = "/var/lib/hambo/hambo.db"
+	defaultStorePath    = "./data/hambo.db"
+	defaultCertFile     = "certs/server.crt"
+	defaultKeyFile      = "certs/server.key"
 	shutdownGracePeriod = 5 * time.Second
 )
 
@@ -32,8 +34,8 @@ func main() {
 	defer stop()
 
 	slog.Info(
-		"starting hambod",
-		"address", "http://"+defaultAddress,
+		"starting hambo server",
+		"address", "https://"+defaultAddress,
 	)
 
 	shutdownLogged := make(chan struct{})
@@ -61,6 +63,8 @@ func main() {
 type runConfig struct {
 	listener  net.Listener
 	storePath string
+	certFile  string
+	keyFile   string
 }
 
 type runOption func(*runConfig)
@@ -85,9 +89,22 @@ func withStorePath(path string) runOption {
 	}
 }
 
+func withTLSFiles(certFile, keyFile string) runOption {
+	if certFile == "" || keyFile == "" {
+		panic("hambo server: TLS certificate and key paths cannot be empty")
+	}
+
+	return func(cfg *runConfig) {
+		cfg.certFile = certFile
+		cfg.keyFile = keyFile
+	}
+}
+
 func run(ctx context.Context, options ...runOption) (runErr error) {
 	cfg := runConfig{
 		storePath: defaultStorePath,
+		certFile:  defaultCertFile,
+		keyFile:   defaultKeyFile,
 	}
 	for _, option := range options {
 		option(&cfg)
@@ -118,12 +135,12 @@ func run(ctx context.Context, options ...runOption) (runErr error) {
 
 	handler := api.NewServer()
 
-	serverErr := runServer(ctx, listener, handler, shutdownGracePeriod)
+	serverErr := runServer(ctx, listener, handler, shutdownGracePeriod, cfg.certFile, cfg.keyFile)
 
 	return serverErr
 }
 
-func runServer(ctx context.Context, listener net.Listener, handler http.Handler, gracePeriod time.Duration) error {
+func runServer(ctx context.Context, listener net.Listener, handler http.Handler, gracePeriod time.Duration, certFile, keyFile string) error {
 	server := &http.Server{
 		Handler: handler,
 	}
@@ -131,7 +148,7 @@ func runServer(ctx context.Context, listener net.Listener, handler http.Handler,
 	serveErrCh := make(chan error, 1)
 
 	go func() {
-		serveErrCh <- server.Serve(listener)
+		serveErrCh <- server.ServeTLS(listener, certFile, keyFile)
 	}()
 
 	select {
