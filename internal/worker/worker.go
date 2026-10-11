@@ -34,7 +34,6 @@ func (w *Worker) Run(ctx context.Context) error {
 
 	slog.Info("hambo server is healthy")
 
-	// Registration and work handling will be added here next.
 	<-ctx.Done()
 	return nil
 }
