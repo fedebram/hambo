@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -21,7 +23,11 @@ func main() {
 }
 
 func run(ctx context.Context) int {
-	rootCmd := newRootCommand()
+	rootCmd, err := newRootCommand()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		return 1
@@ -29,25 +35,28 @@ func run(ctx context.Context) int {
 	return 0
 }
 
-func newRootCommand() *cobra.Command {
-	cfg := cliConfig{}
+func newRootCommand() (*cobra.Command, error) {
+	// TODO:
+	// default user config...
+	// or maybe we default to .hambo? and override with env variable?
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return nil, fmt.Errorf("find user configuration directory: %w", err)
+	}
+	cfg := cliConfig{
+		configPath: filepath.Join(configDir, "hambo", "config.yaml"),
+	}
 	root := &cobra.Command{
 		Use:   "hambo",
 		Short: "Manage containers and images",
 	}
 
-	root.PersistentFlags().StringVar(&cfg.serverURL, "server", "https://localhost:8080", "Hambo server URL")
-	root.PersistentFlags().StringVar(&cfg.caFile, "ca-cert", "./certs/ca.crt", "Path to the trusted CA certificate in PEM format")
-	root.PersistentFlags().StringVar(&cfg.certFile, "client-cert", "./certs/client.crt", "Path to the client certificate in PEM format")
-	root.PersistentFlags().StringVar(&cfg.keyFile, "client-key", "./certs/client.key", "Path to the client private key in PEM format")
+	root.PersistentFlags().StringVar(&cfg.configPath, "config", cfg.configPath, "Path to the CLI configuration file")
 	root.AddCommand(newHealthCommand(&cfg))
 
-	return root
+	return root, nil
 }
 
 type cliConfig struct {
-	serverURL string
-	caFile    string
-	certFile  string
-	keyFile   string
+	configPath string
 }

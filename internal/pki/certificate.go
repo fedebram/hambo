@@ -13,3 +13,7 @@ type Certificate struct {
 func (c *Certificate) Save(dir, name string) error {
 	return saveCertificate(dir, name, c.Certificate, c.PrivateKey)
 }
+
+func (c *Certificate) Remove(dir, name string) error {
+	return removeCertificate(dir, name)
+}

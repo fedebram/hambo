@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 
-	"github.com/fedebram/hambo/client"
 	"github.com/spf13/cobra"
 )
 
@@ -13,16 +12,11 @@ func newHealthCommand(cfg *cliConfig) *cobra.Command {
 		Short: "Check the Hambo server's health",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			httpClient, err := client.NewMTLSClient(cfg.caFile, cfg.certFile, cfg.keyFile)
+			apiClient, cleanup, err := newAPIClient(cfg.configPath)
 			if err != nil {
 				return err
 			}
-			defer httpClient.CloseIdleConnections()
-
-			apiClient, err := client.NewClient(cfg.serverURL, httpClient)
-			if err != nil {
-				return err
-			}
+			defer cleanup()
 
 			health, err := apiClient.Health(cmd.Context())
 			if err != nil {

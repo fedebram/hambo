@@ -16,14 +16,28 @@ func NewMTLSClient(caFile, certFile, keyFile string) (*http.Client, error) {
 		return nil, fmt.Errorf("read CA certificate: %w", err)
 	}
 
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New("CA file contains no valid PEM certificates")
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("read client certificate: %w", err)
 	}
 
-	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	keyPEM, err := os.ReadFile(keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("load client certificate and key: %w", err)
+		return nil, fmt.Errorf("read client private key: %w", err)
+	}
+
+	return NewMTLSClientFromPEM(caPEM, certPEM, keyPEM)
+}
+
+func NewMTLSClientFromPEM(caPEM, certPEM, keyPEM []byte) (*http.Client, error) {
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("CA PEM contains no parseable certificates")
+	}
+
+	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("parse client certificate and key: %w", err)
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()

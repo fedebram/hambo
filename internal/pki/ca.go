@@ -118,3 +118,58 @@ func (ca *CA) IssueServerCertificate(now time.Time) (*Certificate, error) {
 	}, nil
 
 }
+
+func (ca *CA) IssueAdminCertificate(now time.Time) (*Certificate, error) {
+	if now.Before(ca.Certificate.NotBefore) {
+		return nil, errors.New("cannot issue admin certificate: CA is not valid yet")
+	}
+	if !now.Before(ca.Certificate.NotAfter) {
+		return nil, errors.New("cannot issue admin certificate: CA has expired")
+	}
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate admin key: %w", err)
+	}
+
+	template := &x509.Certificate{
+		Subject: pkix.Name{
+			CommonName:   "admin",
+			Organization: []string{"hambo:admins"},
+		},
+		NotBefore:             now.Add(-5 * time.Minute),
+		NotAfter:              now.AddDate(0, 0, 90),
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+
+	if template.NotBefore.Before(ca.Certificate.NotBefore) {
+		template.NotBefore = ca.Certificate.NotBefore
+	}
+	if template.NotAfter.After(ca.Certificate.NotAfter) {
+		template.NotAfter = ca.Certificate.NotAfter
+	}
+
+	der, err := x509.CreateCertificate(
+		rand.Reader,
+		template,
+		ca.Certificate,
+		publicKey,
+		ca.PrivateKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create admin certificate: %w", err)
+	}
+
+	certificate, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, fmt.Errorf("parse admin certificate: %w", err)
+	}
+
+	return &Certificate{
+		Certificate: certificate,
+		PrivateKey:  privateKey,
+	}, nil
+}
