@@ -71,6 +71,11 @@ func (srv *server) readJSON(w http.ResponseWriter, r *http.Request, dst any) boo
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		var sizeErr *http.MaxBytesError
+		if errors.As(err, &sizeErr) {
+			srv.writeErrorJSON(w, http.StatusRequestEntityTooLarge, "request body is too large")
+			return false
+		}
 		srv.writeErrorJSON(
 			w,
 			http.StatusBadRequest,
@@ -82,6 +87,11 @@ func (srv *server) readJSON(w http.ResponseWriter, r *http.Request, dst any) boo
 	// The input must contain exactly one JSON value.
 	var extra any
 	err = dec.Decode(&extra)
+	var sizeErr *http.MaxBytesError
+	if errors.As(err, &sizeErr) {
+		srv.writeErrorJSON(w, http.StatusRequestEntityTooLarge, "request body is too large")
+		return false
+	}
 	if !errors.Is(err, io.EOF) {
 		srv.writeErrorJSON(
 			w,
