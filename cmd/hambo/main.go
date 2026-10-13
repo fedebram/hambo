@@ -36,22 +36,33 @@ func run(ctx context.Context) int {
 }
 
 func newRootCommand() (*cobra.Command, error) {
-	// TODO:
-	// default user config...
-	// or maybe we default to .hambo? and override with env variable?
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return nil, fmt.Errorf("find user configuration directory: %w", err)
+	configPath := os.Getenv("HAMBO_CONFIG")
+	if configPath == "" {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return nil, fmt.Errorf("find user configuration directory: %w", err)
+		}
+		configPath = filepath.Join(configDir, "hambo", "config.yaml")
 	}
-	cfg := cliConfig{
-		configPath: filepath.Join(configDir, "hambo", "config.yaml"),
-	}
+
+	cfg := cliConfig{configPath: configPath}
 	root := &cobra.Command{
 		Use:   "hambo",
 		Short: "Manage containers and images",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if cfg.configPath == "" {
+				return fmt.Errorf("--config must not be empty")
+			}
+			return nil
+		},
 	}
 
-	root.PersistentFlags().StringVar(&cfg.configPath, "config", cfg.configPath, "Path to the CLI configuration file")
+	root.PersistentFlags().StringVar(
+		&cfg.configPath,
+		"config",
+		cfg.configPath,
+		"Path to configuration file",
+	)
 	root.AddCommand(newHealthCommand(&cfg))
 
 	return root, nil
