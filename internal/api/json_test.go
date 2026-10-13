@@ -9,6 +9,8 @@ import (
 	publicapi "github.com/fedebram/hambo/api"
 )
 
+const maxBodyBytes = 64
+
 // We test some behaviour already implemented by encoding/json, even though
 // normally we should not test code that we do not own. This ensures that our
 // JSON function preserves that behaviour while also enforcing the additional rules we added.
@@ -57,6 +59,13 @@ func TestServerReadJSON(t *testing.T) {
 		{"rejects multiple JSON values", "application/json", `{"name":"hello"}{}`, http.StatusBadRequest, "request body contains invalid JSON"},
 		{"rejects a non-JSON content type", "text/plain", `{"name":"hello"}`, http.StatusUnsupportedMediaType, "Content-Type must be application/json"},
 		{"rejects a missing content type", "", `{"name":"hello"}`, http.StatusUnsupportedMediaType, "Content-Type must be application/json"},
+		{
+			"rejects an oversized JSON value",
+			"application/json",
+			`{"name":"` + strings.Repeat("x", maxBodyBytes) + `"}`,
+			http.StatusRequestEntityTooLarge,
+			"request body is too large",
+		},
 	}
 
 	for _, tt := range invalidTests {
@@ -66,6 +75,7 @@ func TestServerReadJSON(t *testing.T) {
 				request.Header.Set("Content-Type", tt.contentType)
 			}
 			response := httptest.NewRecorder()
+			request.Body = http.MaxBytesReader(response, request.Body, maxBodyBytes)
 
 			var decoded payload
 			if ok := srv.readJSON(response, request, &decoded); ok {
