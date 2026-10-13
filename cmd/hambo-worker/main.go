@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -68,16 +69,29 @@ func newRootCommand() *cobra.Command {
 func runWorker(ctx context.Context, cfg workerConfig) error {
 	slog.Info("starting hambo worker", "server", cfg.serverURL)
 
-	httpClient, err := client.NewMTLSClient(cfg.caFile, cfg.certFile, cfg.keyFile)
+	caPEM, err := os.ReadFile(cfg.caFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("read CA certificate: %w", err)
 	}
-	defer httpClient.CloseIdleConnections()
+	certPEM, err := os.ReadFile(cfg.certFile)
+	if err != nil {
+		return fmt.Errorf("read client certificate: %w", err)
+	}
+	keyPEM, err := os.ReadFile(cfg.keyFile)
+	if err != nil {
+		return fmt.Errorf("read client private key: %w", err)
+	}
 
-	apiClient, err := client.NewClient(cfg.serverURL, httpClient)
+	apiClient, err := client.NewClient(client.Config{
+		ServerURL:     cfg.serverURL,
+		CACertPEM:     caPEM,
+		ClientCertPEM: certPEM,
+		ClientKeyPEM:  keyPEM,
+	})
 	if err != nil {
 		return err
 	}
+	defer apiClient.CloseIdleConnections()
 
 	w := worker.NewWorker(apiClient)
 	if err := w.Run(ctx); err != nil {

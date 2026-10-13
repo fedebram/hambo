@@ -11,20 +11,15 @@ func newAPIClient(configPath string) (*client.Client, func(), error) {
 		return nil, nil, err
 	}
 
-	httpClient, err := client.NewMTLSClientFromPEM(
-		[]byte(cfg.CACert),
-		[]byte(cfg.ClientCert),
-		[]byte(cfg.ClientKey),
-	)
+	apiClient, err := client.NewClient(client.Config{
+		ServerURL:     cfg.ServerURL,
+		CACertPEM:     []byte(cfg.CACert),
+		ClientCertPEM: []byte(cfg.ClientCert),
+		ClientKeyPEM:  []byte(cfg.ClientKey),
+	})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	apiClient, err := client.NewClient(cfg.ServerURL, httpClient)
-	if err != nil {
-		httpClient.CloseIdleConnections()
-		return nil, nil, err
-	}
-
-	return apiClient, httpClient.CloseIdleConnections, nil
+	return apiClient, apiClient.CloseIdleConnections, nil
 }

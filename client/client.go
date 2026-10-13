@@ -3,12 +3,15 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/fedebram/hambo/api"
 )
@@ -18,16 +21,19 @@ type Client struct {
 	httpClient *http.Client
 }
 
-func NewClient(baseURL string, httpClient *http.Client) (*Client, error) {
-	if baseURL == "" {
+type Config struct {
+	ServerURL     string
+	CACertPEM     []byte
+	ClientCertPEM []byte
+	ClientKeyPEM  []byte
+}
+
+func NewClient(cfg Config) (*Client, error) {
+	if cfg.ServerURL == "" {
 		return nil, errors.New("base URL cannot be empty")
 	}
 
-	if httpClient == nil {
-		return nil, errors.New("HTTP client cannot be nil")
-	}
-
-	u, err := url.Parse(baseURL)
+	u, err := url.Parse(cfg.ServerURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse base URL: %w", err)
 	}
@@ -39,11 +45,37 @@ func NewClient(baseURL string, httpClient *http.Client) (*Client, error) {
 	if u.Hostname() == "" {
 		return nil, errors.New("base URL must include a hostname")
 	}
+	if u.User != nil {
+		return nil, errors.New("base URL must not contain credentials")
+	}
+
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(cfg.CACertPEM) {
+		return nil, errors.New("CA PEM contains no parseable certificates")
+	}
+	certificate, err := tls.X509KeyPair(cfg.ClientCertPEM, cfg.ClientKeyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("parse client certificate and key: %w", err)
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{
+		RootCAs:      roots,
+		Certificates: []tls.Certificate{certificate},
+	}
+	httpClient := &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Second,
+	}
 
 	return &Client{
 		baseURL:    u,
 		httpClient: httpClient,
 	}, nil
+}
+
+func (c *Client) CloseIdleConnections() {
+	c.httpClient.CloseIdleConnections()
 }
 
 func (c *Client) Health(ctx context.Context) (api.HealthResponse, error) {
