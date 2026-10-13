@@ -7,16 +7,79 @@ import (
 	"testing"
 )
 
-func TestStore(t *testing.T) {
+func TestCollection(t *testing.T) {
+	t.Run("retrieve and modify typed collection", func(t *testing.T) {
+		type record struct {
+			Name string
+			Used bool
+		}
+		collection := newTestCollection[record](t)
+		want := record{Name: "hello"}
+		if err := collection.Create("key", want); err != nil {
+			t.Fatalf("create entry: %v", err)
+		}
+		got, err := collection.Get("key")
+		if err != nil {
+			t.Fatalf("get entry: %v", err)
+		}
+		if got != want {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+
+		if err := collection.Modify("key", func(value *record) error {
+			value.Used = true
+			return nil
+		}); err != nil {
+			t.Fatalf("modify entry: %v", err)
+		}
+		got, err = collection.Get("key")
+		if err != nil {
+			t.Fatalf("get modified entry: %v", err)
+		}
+		want.Used = true
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("collections keep entries separate", func(t *testing.T) {
+		db := newTestStore(t)
+		first, err := NewCollection[string](db, "first")
+		if err != nil {
+			t.Fatalf("create first collection: %v", err)
+		}
+		second, err := NewCollection[string](db, "second")
+		if err != nil {
+			t.Fatalf("create second collection: %v", err)
+		}
+		if err := first.Create("hello", "one"); err != nil {
+			t.Fatalf("create first entry: %v", err)
+		}
+		if err := second.Create("hello", "two"); err != nil {
+			t.Fatalf("create second entry: %v", err)
+		}
+
+		if err := first.Delete("hello"); err != nil {
+			t.Fatalf("delete first entry: %v", err)
+		}
+		got, err := second.Get("hello")
+		if err != nil {
+			t.Fatalf("get second entry: %v", err)
+		}
+		if got != "two" {
+			t.Errorf("got %q, want %q", got, "two")
+		}
+	})
+
 	t.Run("created entry can be retrieved", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 		want := "world"
 
-		if err := store.Create("hello", want); err != nil {
+		if err := collection.Create("hello", want); err != nil {
 			t.Fatalf("create entry: %v", err)
 		}
 
-		got, err := store.Get("hello")
+		got, err := collection.Get("hello")
 		if err != nil {
 			t.Fatalf("get entry: %v", err)
 		}
@@ -26,26 +89,26 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("getting missing entry returns not found", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 
-		_, err := store.Get("missing")
+		_, err := collection.Get("missing")
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("got error %v, want %v", err, ErrNotFound)
 		}
 	})
 
 	t.Run("duplicate entry is rejected", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 		original := "world"
 
-		if err := store.Create("hello", original); err != nil {
+		if err := collection.Create("hello", original); err != nil {
 			t.Fatalf("create entry: %v", err)
 		}
-		if err := store.Create("hello", "replacement"); !errors.Is(err, ErrAlreadyExists) {
+		if err := collection.Create("hello", "replacement"); !errors.Is(err, ErrAlreadyExists) {
 			t.Fatalf("got error %v, want %v", err, ErrAlreadyExists)
 		}
 
-		got, err := store.Get("hello")
+		got, err := collection.Get("hello")
 		if err != nil {
 			t.Fatalf("get entry: %v", err)
 		}
@@ -55,20 +118,21 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("entry can be modified", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 
-		if err := store.Create("hello", "world"); err != nil {
+		if err := collection.Create("hello", "world"); err != nil {
 			t.Fatalf("create entry: %v", err)
 		}
 
-		err := store.Modify("hello", func(value string) (string, error) {
-			return value + "!", nil
+		err := collection.Modify("hello", func(value *string) error {
+			*value += "!"
+			return nil
 		})
 		if err != nil {
 			t.Fatalf("modify entry: %v", err)
 		}
 
-		got, err := store.Get("hello")
+		got, err := collection.Get("hello")
 		if err != nil {
 			t.Fatalf("get entry: %v", err)
 		}
@@ -78,12 +142,13 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("modifying missing entry returns not found", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 		called := false
 
-		err := store.Modify("missing", func(value string) (string, error) {
+		err := collection.Modify("missing", func(value *string) error {
 			called = true
-			return "updated", nil
+			*value = "updated"
+			return nil
 		})
 		if !errors.Is(err, ErrNotFound) {
 			t.Fatalf("got error %v, want %v", err, ErrNotFound)
@@ -92,29 +157,30 @@ func TestStore(t *testing.T) {
 			t.Error("callback was called for a missing entry")
 		}
 
-		_, err = store.Get("missing")
+		_, err = collection.Get("missing")
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("got error %v after failed modify, want %v", err, ErrNotFound)
 		}
 	})
 
 	t.Run("failed modification is not stored", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 		original := "world"
 
-		if err := store.Create("hello", original); err != nil {
+		if err := collection.Create("hello", original); err != nil {
 			t.Fatalf("create entry: %v", err)
 		}
 
 		wantErr := errors.New("callback failed")
-		err := store.Modify("hello", func(value string) (string, error) {
-			return "replacement", wantErr
+		err := collection.Modify("hello", func(value *string) error {
+			*value = "replacement"
+			return wantErr
 		})
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("got error %v, want %v", err, wantErr)
 		}
 
-		got, err := store.Get("hello")
+		got, err := collection.Get("hello")
 		if err != nil {
 			t.Fatalf("get entry: %v", err)
 		}
@@ -124,48 +190,48 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("entry can be deleted", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 
-		if err := store.Create("hello", "world"); err != nil {
+		if err := collection.Create("hello", "world"); err != nil {
 			t.Fatalf("create entry: %v", err)
 		}
-		if err := store.Delete("hello"); err != nil {
+		if err := collection.Delete("hello"); err != nil {
 			t.Fatalf("delete entry: %v", err)
 		}
 
-		_, err := store.Get("hello")
+		_, err := collection.Get("hello")
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("got error %v, want %v", err, ErrNotFound)
 		}
 	})
 
 	t.Run("deleting missing entry succeeds", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 
-		if err := store.Delete("missing"); err != nil {
+		if err := collection.Delete("missing"); err != nil {
 			t.Fatalf("delete missing entry: %v", err)
 		}
 	})
 
 	t.Run("entries can be listed in key order", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 
-		for _, entry := range []Entry{
+		for _, entry := range []Entry[string]{
 			{Key: "charlie", Value: "three"},
 			{Key: "alpha", Value: "one"},
 			{Key: "bravo", Value: "two"},
 		} {
-			if err := store.Create(entry.Key, entry.Value); err != nil {
+			if err := collection.Create(entry.Key, entry.Value); err != nil {
 				t.Fatalf("create entry: %v", err)
 			}
 		}
 
-		got, err := store.List()
+		got, err := collection.List()
 		if err != nil {
 			t.Fatalf("list entries: %v", err)
 		}
 
-		want := []Entry{
+		want := []Entry[string]{
 			{Key: "alpha", Value: "one"},
 			{Key: "bravo", Value: "two"},
 			{Key: "charlie", Value: "three"},
@@ -180,10 +246,10 @@ func TestStore(t *testing.T) {
 		}
 	})
 
-	t.Run("empty store lists no entries", func(t *testing.T) {
-		store := newTestStore(t)
+	t.Run("empty collection lists no entries", func(t *testing.T) {
+		collection := newTestCollection[string](t)
 
-		got, err := store.List()
+		got, err := collection.List()
 		if err != nil {
 			t.Fatalf("list entries: %v", err)
 		}
@@ -193,7 +259,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("entries can be created concurrently", func(t *testing.T) {
-		store := newTestStore(t)
+		collection := newTestCollection[string](t)
 		const count = 100
 
 		errCh := make(chan error, count)
@@ -206,7 +272,7 @@ func TestStore(t *testing.T) {
 
 				key := fmt.Sprintf("entry-%03d", i)
 				value := fmt.Sprintf("value-%d", i)
-				if err := store.Create(key, value); err != nil {
+				if err := collection.Create(key, value); err != nil {
 					errCh <- err
 				}
 			}(i)
@@ -221,7 +287,7 @@ func TestStore(t *testing.T) {
 			t.FailNow()
 		}
 
-		got, err := store.List()
+		got, err := collection.List()
 		if err != nil {
 			t.Fatalf("list entries: %v", err)
 		}
@@ -230,7 +296,7 @@ func TestStore(t *testing.T) {
 		}
 
 		for i := range count {
-			want := Entry{
+			want := Entry[string]{
 				Key:   fmt.Sprintf("entry-%03d", i),
 				Value: fmt.Sprintf("value-%d", i),
 			}

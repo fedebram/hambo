@@ -21,3 +21,14 @@ func newTestStore(t *testing.T) *Store {
 
 	return store
 }
+
+func newTestCollection[T any](t *testing.T) *Collection[T] {
+	t.Helper()
+
+	collection, err := NewCollection[T](newTestStore(t), "entries")
+	if err != nil {
+		t.Fatalf("create collection: %v", err)
+	}
+
+	return collection
+}
