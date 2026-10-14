@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/fedebram/hambo/internal/api"
 	"github.com/fedebram/hambo/internal/store"
+	"github.com/fedebram/hambo/internal/token"
 )
 
 const (
@@ -62,31 +64,43 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("read client CA certificate: %w", err)
 	}
-	clientCAs := x509.NewCertPool()
-	if !clientCAs.AppendCertsFromPEM(caPEM) {
-		return errors.New("client CA file contains no valid PEM certificates")
+
+	block, _ := pem.Decode(caPEM)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return errors.New("CA file must contain a PEM certificate")
 	}
+	caCertificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("parse CA certificate: %w", err)
+	}
+	clientCAs := x509.NewCertPool()
+	clientCAs.AddCert(caCertificate)
 
 	if err := os.MkdirAll(filepath.Dir(storePath), 0o700); err != nil {
 		return fmt.Errorf("create store directory: %w", err)
 	}
 
-	store, err := store.Open(storePath)
+	db, err := store.Open(storePath)
 	if err != nil {
-		return fmt.Errorf("open container store: %w", err)
+		return fmt.Errorf("open db: %w", err)
 	}
 	defer func() {
-		if err := store.Close(); err != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("close container store: %w", err))
+		if err := db.Close(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("close db: %w", err))
 		}
 	}()
+
+	tokens, err := store.NewCollection[token.Metadata](db, "tokens")
+	if err != nil {
+		return fmt.Errorf("open token collection: %w", err)
+	}
 
 	listener, err := net.Listen("tcp", defaultAddress)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	handler := api.NewServer()
+	handler := api.NewServer(tokens, caCertificate)
 
 	return runServer(ctx, listener, handler, shutdownGracePeriod, certFile, keyFile, clientCAs)
 }
