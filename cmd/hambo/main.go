@@ -63,7 +63,9 @@ func newRootCommand() (*cobra.Command, error) {
 		cfg.configPath,
 		"Path to configuration file",
 	)
+
 	root.AddCommand(newHealthCommand(&cfg))
+	root.AddCommand(newTokenCommand(&cfg))
 
 	return root, nil
 }
