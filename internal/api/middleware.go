@@ -5,10 +5,8 @@ import (
 	"slices"
 )
 
-func (srv *server) requireGroup(group string, next http.Handler) http.Handler {
+func (srv *server) requireCertificate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// right now we enforce on the tls config that the client cert is required, but this check
-		// is done to prevent panic
 		if r.TLS == nil ||
 			len(r.TLS.VerifiedChains) == 0 ||
 			len(r.TLS.VerifiedChains[0]) == 0 {
@@ -18,16 +16,24 @@ func (srv *server) requireGroup(group string, next http.Handler) http.Handler {
 			return
 		}
 
-		cert := r.TLS.VerifiedChains[0][0]
-		if !slices.Contains(cert.Subject.Organization, group) {
-			srv.writeErrorJSON(
-				w, http.StatusForbidden, "permission denied",
-			)
-			return
-		}
-
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (srv *server) requireGroup(group string, next http.Handler) http.Handler {
+	return srv.requireCertificate(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			cert := r.TLS.VerifiedChains[0][0]
+			if !slices.Contains(cert.Subject.Organization, group) {
+				srv.writeErrorJSON(
+					w, http.StatusForbidden, "permission denied",
+				)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		},
+	))
 }
 
 func (srv *server) adminOnly(next http.Handler) http.Handler {

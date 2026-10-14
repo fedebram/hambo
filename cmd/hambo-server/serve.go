@@ -109,8 +109,10 @@ func runServer(ctx context.Context, listener net.Listener, handler http.Handler,
 	server := &http.Server{
 		Handler: handler,
 		TLSConfig: &tls.Config{
-			ClientCAs:  clientCAs,
-			ClientAuth: tls.RequireAndVerifyClientCert,
+			ClientCAs: clientCAs,
+			// this way we can have normal https routes and mtls routes.
+			// we enforce via middleware.
+			ClientAuth: tls.VerifyClientCertIfGiven,
 		},
 	}
 
