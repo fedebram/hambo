@@ -19,13 +19,22 @@ import (
 // this takes inspiration from the token format of k3s see:
 // https://docs.k3s.io/cli/token
 
+// TODO: we need a way to delete used and expired tokens.
+
 type Token struct {
 	CAFingerprint string
 	Secret        string
 }
 
 type Metadata struct {
-	ExpiresAt time.Time `json:"expires_at"`
+	ExpiresAt  time.Time         `json:"expires_at"`
+	Enrollment *EnrollmentResult `json:"enrollment,omitempty"`
+}
+
+type EnrollmentResult struct {
+	RequestHash string `json:"request_hash"`
+	NodeID      string `json:"node_id"`
+	Certificate string `json:"certificate"`
 }
 
 func (m Metadata) Expired(now time.Time) bool {

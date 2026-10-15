@@ -8,6 +8,8 @@ import (
 	"fmt"
 )
 
+var ErrInvalidCSR = errors.New("invalid CSR")
+
 func GenerateNodeCSR(privateKey ed25519.PrivateKey) ([]byte, error) {
 	if len(privateKey) != ed25519.PrivateKeySize {
 		return nil, errors.New("invalid Ed25519 private key size")

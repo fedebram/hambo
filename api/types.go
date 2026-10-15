@@ -19,3 +19,13 @@ type CreateTokenResponse struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
+
+type JoinNodeRequest struct {
+	Name string `json:"name"`
+	CSR  []byte `json:"csr"`
+}
+
+type JoinNodeResponse struct {
+	NodeID      string `json:"node_id"`
+	Certificate string `json:"certificate"`
+}

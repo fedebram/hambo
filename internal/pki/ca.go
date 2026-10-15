@@ -221,16 +221,16 @@ func (ca *CA) IssueNodeCertificate(now time.Time, nodeID string, csrDER []byte) 
 
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil {
-		return nil, fmt.Errorf("parse node CSR: %w", err)
+		return nil, fmt.Errorf("%w: parse node CSR: %w", ErrInvalidCSR, err)
 	}
 
 	publicKey, ok := csr.PublicKey.(ed25519.PublicKey)
 	if !ok {
-		return nil, errors.New("node CSR must use an Ed25519 public key")
+		return nil, fmt.Errorf("%w: node CSR must use an Ed25519 public key", ErrInvalidCSR)
 	}
 
 	if err := csr.CheckSignature(); err != nil {
-		return nil, fmt.Errorf("verify node CSR signature: %w", err)
+		return nil, fmt.Errorf("%w: verify node CSR signature: %w", ErrInvalidCSR, err)
 	}
 
 	template := &x509.Certificate{

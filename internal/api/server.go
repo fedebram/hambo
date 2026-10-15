@@ -1,9 +1,11 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 
+	"github.com/fedebram/hambo/internal/node"
 	"github.com/fedebram/hambo/internal/pki"
 	"github.com/fedebram/hambo/internal/store"
 	"github.com/fedebram/hambo/internal/token"
@@ -12,28 +14,45 @@ import (
 type server struct {
 	mux    *http.ServeMux
 	logger *slog.Logger
+	db     *store.Store
 	tokens *store.Collection[token.Metadata]
+	nodes  *store.Collection[node.Node]
 	ca     *pki.CA
 }
 
 // Inspired by https://grafana.com/blog/how-i-write-http-services-in-go-after-13-years/
 
-func NewServer(tokens *store.Collection[token.Metadata], ca *pki.CA, options ...ServerOption) http.Handler {
-	return newServer(tokens, ca, options...)
+func NewServer(db *store.Store, ca *pki.CA, options ...ServerOption) (http.Handler, error) {
+	srv, err := newServer(db, ca, options...)
+	if err != nil {
+		return nil, err
+	}
+	return srv, nil
 }
 
-func newServer(tokens *store.Collection[token.Metadata], ca *pki.CA, options ...ServerOption) *server {
-	if tokens == nil {
-		panic("api: token collection cannot be nil")
+func newServer(db *store.Store, ca *pki.CA, options ...ServerOption) (*server, error) {
+	if db == nil {
+		panic("api: db cannot be nil")
 	}
 	if ca == nil {
 		panic("api: CA certificate cannot be nil")
 	}
 
+	tokens, err := store.NewCollection[token.Metadata](db, "tokens")
+	if err != nil {
+		return nil, fmt.Errorf("open token collection: %w", err)
+	}
+	nodes, err := store.NewCollection[node.Node](db, "nodes")
+	if err != nil {
+		return nil, fmt.Errorf("open node collection: %w", err)
+	}
+
 	srv := &server{
 		mux:    http.NewServeMux(),
 		logger: slog.Default(),
+		db:     db,
 		tokens: tokens,
+		nodes:  nodes,
 		ca:     ca,
 	}
 
@@ -43,7 +62,7 @@ func newServer(tokens *store.Collection[token.Metadata], ca *pki.CA, options ...
 
 	srv.addRoutes()
 
-	return srv
+	return srv, nil
 }
 
 func (srv *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -18,7 +18,6 @@ import (
 	"github.com/fedebram/hambo/internal/api"
 	"github.com/fedebram/hambo/internal/pki"
 	"github.com/fedebram/hambo/internal/store"
-	"github.com/fedebram/hambo/internal/token"
 )
 
 const (
@@ -54,7 +53,7 @@ func newServeCommand() *cobra.Command {
 }
 
 func run(ctx context.Context, dataDir string) (runErr error) {
-	storePath := filepath.Join(dataDir, "hambo.db")
+	dbPath := filepath.Join(dataDir, "hambo.db")
 	pkiDir := filepath.Join(dataDir, "pki")
 	certFile := filepath.Join(pkiDir, "server.crt")
 	keyFile := filepath.Join(pkiDir, "server.key")
@@ -66,11 +65,11 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 	clientCAs := x509.NewCertPool()
 	clientCAs.AddCert(ca.Certificate)
 
-	if err := os.MkdirAll(filepath.Dir(storePath), 0o700); err != nil {
-		return fmt.Errorf("create store directory: %w", err)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		return fmt.Errorf("create db directory: %w", err)
 	}
 
-	db, err := store.Open(storePath)
+	db, err := store.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -80,17 +79,15 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 		}
 	}()
 
-	tokens, err := store.NewCollection[token.Metadata](db, "tokens")
+	handler, err := api.NewServer(db, ca)
 	if err != nil {
-		return fmt.Errorf("open token collection: %w", err)
+		return fmt.Errorf("create API server: %w", err)
 	}
 
 	listener, err := net.Listen("tcp", defaultAddress)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-
-	handler := api.NewServer(tokens, ca)
 
 	return runServer(ctx, listener, handler, shutdownGracePeriod, certFile, keyFile, clientCAs)
 }

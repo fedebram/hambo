@@ -7,6 +7,8 @@ import "net/http"
 func (srv *server) addRoutes() {
 	srv.mux.HandleFunc("GET /ca", srv.getCAHandler)
 
+	srv.mux.HandleFunc("POST /nodes/join", srv.joinNodeHandler)
+
 	srv.mux.Handle("GET /health",
 		srv.requireCertificate(http.HandlerFunc(srv.healthHandler)))
 
