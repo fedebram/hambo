@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fedebram/hambo/internal/api"
+	"github.com/fedebram/hambo/internal/pki"
 	"github.com/fedebram/hambo/internal/store"
 	"github.com/fedebram/hambo/internal/token"
 )
@@ -56,25 +56,15 @@ func newServeCommand() *cobra.Command {
 func run(ctx context.Context, dataDir string) (runErr error) {
 	storePath := filepath.Join(dataDir, "hambo.db")
 	pkiDir := filepath.Join(dataDir, "pki")
-	caFile := filepath.Join(pkiDir, "ca.crt")
 	certFile := filepath.Join(pkiDir, "server.crt")
 	keyFile := filepath.Join(pkiDir, "server.key")
 
-	caPEM, err := os.ReadFile(caFile)
+	ca, err := pki.LoadCA(pkiDir)
 	if err != nil {
-		return fmt.Errorf("read client CA certificate: %w", err)
-	}
-
-	block, _ := pem.Decode(caPEM)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return errors.New("CA file must contain a PEM certificate")
-	}
-	caCertificate, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return fmt.Errorf("parse CA certificate: %w", err)
+		return fmt.Errorf("load CA: %w", err)
 	}
 	clientCAs := x509.NewCertPool()
-	clientCAs.AddCert(caCertificate)
+	clientCAs.AddCert(ca.Certificate)
 
 	if err := os.MkdirAll(filepath.Dir(storePath), 0o700); err != nil {
 		return fmt.Errorf("create store directory: %w", err)
@@ -100,7 +90,7 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	handler := api.NewServer(tokens, caCertificate)
+	handler := api.NewServer(tokens, ca)
 
 	return runServer(ctx, listener, handler, shutdownGracePeriod, certFile, keyFile, clientCAs)
 }

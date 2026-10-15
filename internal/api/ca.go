@@ -10,7 +10,7 @@ func (srv *server) getCAHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := pem.Encode(w, &pem.Block{
 		Type:  "CERTIFICATE",
-		Bytes: srv.caCert.Raw,
+		Bytes: srv.ca.Certificate.Raw,
 	}); err != nil {
 		srv.logger.Error("write CA certificate response", "error", err)
 	}

@@ -11,7 +11,7 @@ import (
 func newTokenCommand(cfg *cliConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "token",
-		Short: "Manage worker enrollment tokens",
+		Short: "Manage node join tokens",
 	}
 
 	cmd.AddCommand(newTokenCreateCommand(cfg))
@@ -23,7 +23,7 @@ func newTokenCreateCommand(cfg *cliConfig) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a worker enrollment token",
+		Short: "Create a node join token",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if ttl <= 0 || ttl > 24*time.Hour {

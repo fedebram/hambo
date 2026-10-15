@@ -40,7 +40,7 @@ func (srv *server) createTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	generated, err := token.Generate(srv.caCert)
+	generated, err := token.Generate(srv.ca.Certificate)
 	if err != nil {
 		srv.logger.Error("generate token", "error", err)
 		srv.writeErrorJSON(w, http.StatusInternalServerError, "could not create token")
