@@ -9,6 +9,12 @@ func (srv *server) addRoutes() {
 
 	srv.mux.HandleFunc("POST /nodes/join", srv.joinNodeHandler)
 
+	srv.mux.Handle("GET /nodes/self/watch",
+		srv.nodeOnly(http.HandlerFunc(srv.watchNodeHandler)))
+
+	srv.mux.Handle("POST /nodes/self/status",
+		srv.nodeOnly(http.HandlerFunc(srv.reportNodeStatusHandler)))
+
 	srv.mux.Handle("GET /health",
 		srv.requireCertificate(http.HandlerFunc(srv.healthHandler)))
 

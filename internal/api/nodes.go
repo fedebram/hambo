@@ -219,3 +219,15 @@ func joinNodeRequestHash(request publicapi.JoinNodeRequest) (string, error) {
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:]), nil
 }
+
+func (srv *server) watchNodeHandler(w http.ResponseWriter, r *http.Request) {
+	srv.writeErrorJSON(
+		w, http.StatusNotImplemented, "node watch is not implemented",
+	)
+}
+
+func (srv *server) reportNodeStatusHandler(w http.ResponseWriter, r *http.Request) {
+	srv.writeErrorJSON(
+		w, http.StatusNotImplemented, "node status reporting is not implemented",
+	)
+}

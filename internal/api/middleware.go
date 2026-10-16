@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"slices"
+	"strings"
 )
 
 func (srv *server) requireCertificate(next http.Handler) http.Handler {
@@ -38,4 +40,31 @@ func (srv *server) requireGroup(group string, next http.Handler) http.Handler {
 
 func (srv *server) adminOnly(next http.Handler) http.Handler {
 	return srv.requireGroup("hambo:admins", next)
+}
+
+func (srv *server) nodeOnly(next http.Handler) http.Handler {
+	return srv.requireGroup("hambo:nodes", http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			cert := r.TLS.VerifiedChains[0][0]
+
+			nodeID, ok := strings.CutPrefix(
+				cert.Subject.CommonName,
+				"hambo:node:",
+			)
+			if !ok || nodeID == "" {
+				srv.writeErrorJSON(
+					w, http.StatusForbidden, "invalid node identity",
+				)
+				return
+			}
+
+			ctx := context.WithValue(
+				r.Context(),
+				nodeIDContextKey{},
+				nodeID,
+			)
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		},
+	))
 }
