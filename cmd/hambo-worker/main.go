@@ -2,22 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
+	"errors"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
-	"github.com/fedebram/hambo/client"
-	"github.com/fedebram/hambo/internal/worker"
 	"github.com/spf13/cobra"
-)
-
-const (
-	defaultServerURL = "https://localhost:8080"
-	defaultCAFile    = "./certs/ca.crt"
-	defaultCertFile  = "./certs/worker.crt"
-	defaultKeyFile   = "./certs/worker.key"
 )
 
 func main() {
@@ -26,78 +17,40 @@ func main() {
 		os.Interrupt,
 		syscall.SIGTERM,
 	)
-	code := run(ctx)
+
+	err := newRootCommand().ExecuteContext(ctx)
 	stop()
-	os.Exit(code)
-}
-
-func run(ctx context.Context) int {
-	rootCmd := newRootCommand()
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
-		return 1
+	if err != nil {
+		os.Exit(1)
 	}
-	return 0
 }
 
-type workerConfig struct {
-	serverURL string
-	caFile    string
-	certFile  string
-	keyFile   string
-}
-
-// we use cobra here because it is just simple and works.
-// it is possible to use go flags but I have already setup this for the hambo cli so fine like that.
+const defaultDataDir = "./data"
 
 func newRootCommand() *cobra.Command {
-	cfg := workerConfig{}
 	root := &cobra.Command{
 		Use:   "hambo-worker",
-		Short: "Run a Hambo worker",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runWorker(cmd.Context(), cfg)
+		Short: "Manage containers",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			dataDir, err := cmd.Flags().GetString("data-dir")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(dataDir) == "" {
+				return errors.New("--data-dir must not be empty")
+			}
+			return nil
 		},
 	}
-	root.Flags().StringVar(&cfg.serverURL, "server", defaultServerURL, "Hambo server URL")
-	root.Flags().StringVar(&cfg.caFile, "ca-cert", defaultCAFile, "Path to the trusted CA certificate in PEM format")
-	root.Flags().StringVar(&cfg.certFile, "client-cert", defaultCertFile, "Path to the worker client certificate in PEM format")
-	root.Flags().StringVar(&cfg.keyFile, "client-key", defaultKeyFile, "Path to the worker private key in PEM format")
+
+	root.PersistentFlags().String(
+		"data-dir",
+		defaultDataDir,
+		"Directory for persistent worker data",
+	)
+
+	root.AddCommand(newJoinCommand())
+	root.AddCommand(newStartCommand())
+
 	return root
-}
-
-func runWorker(ctx context.Context, cfg workerConfig) error {
-	slog.Info("starting hambo worker", "server", cfg.serverURL)
-
-	caPEM, err := os.ReadFile(cfg.caFile)
-	if err != nil {
-		return fmt.Errorf("read CA certificate: %w", err)
-	}
-	certPEM, err := os.ReadFile(cfg.certFile)
-	if err != nil {
-		return fmt.Errorf("read client certificate: %w", err)
-	}
-	keyPEM, err := os.ReadFile(cfg.keyFile)
-	if err != nil {
-		return fmt.Errorf("read client private key: %w", err)
-	}
-
-	apiClient, err := client.NewClient(client.Config{
-		ServerURL:     cfg.serverURL,
-		CACertPEM:     caPEM,
-		ClientCertPEM: certPEM,
-		ClientKeyPEM:  keyPEM,
-	})
-	if err != nil {
-		return err
-	}
-	defer apiClient.CloseIdleConnections()
-
-	w := worker.NewWorker(apiClient)
-	if err := w.Run(ctx); err != nil {
-		return err
-	}
-
-	slog.Info("hambo worker stopped")
-	return nil
 }
