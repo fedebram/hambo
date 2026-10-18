@@ -227,7 +227,40 @@ func (srv *server) watchNodeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (srv *server) reportNodeStatusHandler(w http.ResponseWriter, r *http.Request) {
-	srv.writeErrorJSON(
-		w, http.StatusNotImplemented, "node status reporting is not implemented",
-	)
+	nodeID, ok := nodeIDFromContext(r.Context())
+	if !ok {
+		srv.logger.Error("node identity missing from request context")
+		srv.writeErrorJSON(
+			w, http.StatusInternalServerError,
+			"could not process node status",
+		)
+		return
+	}
+
+	err := srv.nodes.Modify(nodeID, func(current *node.Node) error {
+		now := time.Now().UTC()
+		current.LastSeenAt = &now
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			srv.writeErrorJSON(
+				w, http.StatusNotFound, "node not found",
+			)
+			return
+		}
+
+		srv.logger.Error(
+			"record node heartbeat",
+			"node_id", nodeID,
+			"error", err,
+		)
+		srv.writeErrorJSON(
+			w, http.StatusInternalServerError,
+			"could not record node heartbeat",
+		)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

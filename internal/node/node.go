@@ -4,11 +4,15 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"time"
 )
 
+// we can use omitzero for time... but i think it is good like that.
+
 type Node struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 }
 
 func GenerateNodeID() (string, error) {
