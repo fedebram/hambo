@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/fedebram/hambo/internal/store"
 )
 
 func (srv *server) requireCertificate(next http.Handler) http.Handler {
@@ -54,6 +57,26 @@ func (srv *server) nodeOnly(next http.Handler) http.Handler {
 			if !ok || nodeID == "" {
 				srv.writeErrorJSON(
 					w, http.StatusForbidden, "invalid node identity",
+				)
+				return
+			}
+
+			if _, err := srv.nodes.Get(nodeID); err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					srv.writeErrorJSON(
+						w, http.StatusForbidden, "node is not registered",
+					)
+					return
+				}
+
+				srv.logger.Error(
+					"check node membership",
+					"node_id", nodeID,
+					"error", err,
+				)
+				srv.writeErrorJSON(
+					w, http.StatusInternalServerError,
+					"could not check node membership",
 				)
 				return
 			}
