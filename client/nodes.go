@@ -16,6 +16,10 @@ import (
 	"github.com/fedebram/hambo/api"
 )
 
+func (c *Client) ReportNodeStatus(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "nodes/self/status", nil, nil)
+}
+
 // TODO: there are many repetitions here and also on fetch ca function. we need a way to unify everything.
 // a self contained function with a client inside make sense for now because it is different from the mtls client.
 
