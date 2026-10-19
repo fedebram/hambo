@@ -45,6 +45,9 @@ type ContainerResponse struct {
 	State    ContainerState `json:"state"`
 	ExitCode *int           `json:"exit_code,omitempty"`
 
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
+
 	CreatedAt           time.Time  `json:"created_at"`
 	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
 }

@@ -16,7 +16,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fedebram/hambo/internal/api"
+	"github.com/fedebram/hambo/internal/container"
+	"github.com/fedebram/hambo/internal/node"
 	"github.com/fedebram/hambo/internal/pki"
+	"github.com/fedebram/hambo/internal/queue"
+	"github.com/fedebram/hambo/internal/scheduler"
 	"github.com/fedebram/hambo/internal/store"
 )
 
@@ -76,7 +80,19 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 		}
 	}()
 
-	handler, err := api.NewServer(db, ca)
+	nodes, err := store.NewCollection[node.Node](db, "nodes")
+	if err != nil {
+		return fmt.Errorf("open nodes collection: %w", err)
+	}
+	containers, err := store.NewCollection[container.Container](db, "containers")
+	if err != nil {
+		return fmt.Errorf("open containers collection: %w", err)
+	}
+
+	schedulingQueue := queue.NewMemoryQueue()
+	defer schedulingQueue.Shutdown()
+
+	handler, err := api.NewServer(db, ca, schedulingQueue, nodes, containers)
 	if err != nil {
 		return fmt.Errorf("create API server: %w", err)
 	}
@@ -85,8 +101,36 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
+	defer listener.Close()
 
-	return runServer(ctx, listener, handler, shutdownGracePeriod, certFile, keyFile, clientCAs)
+	containerScheduler := scheduler.NewScheduler(db, schedulingQueue, nodes, containers)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	schedulerDone := make(chan error, 1)
+	go func() {
+		err := containerScheduler.Run()
+		// an error can be encountered during the scheduler startup.
+		// we cancel the context shared with the server.
+		if err != nil {
+			cancel()
+		}
+		schedulerDone <- err
+	}()
+
+	serverErr := runServer(
+		runCtx, listener, handler, shutdownGracePeriod,
+		certFile, keyFile, clientCAs,
+	)
+
+	schedulingQueue.Shutdown()
+	// we wait the scheduler to exit before we return the function
+	schedulerErr := <-schedulerDone
+	if schedulerErr != nil {
+		schedulerErr = fmt.Errorf("run scheduler: %w", schedulerErr)
+	}
+
+	return errors.Join(serverErr, schedulerErr)
 }
 
 func runServer(ctx context.Context, listener net.Listener, handler http.Handler, gracePeriod time.Duration, certFile, keyFile string, clientCAs *x509.CertPool) error {

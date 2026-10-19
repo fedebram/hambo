@@ -77,6 +77,8 @@ func (srv *server) createContainerHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	srv.schedulingQueue.Add(created.ID)
+
 	srv.writeJSON(w, http.StatusCreated, publicapi.ContainerResponse{
 		ID:                  created.ID,
 		Name:                created.Name,
@@ -84,6 +86,8 @@ func (srv *server) createContainerHandler(w http.ResponseWriter, r *http.Request
 		NodeID:              created.NodeID,
 		State:               publicapi.ContainerState(created.State),
 		ExitCode:            created.ExitCode,
+		Reason:              created.Reason,
+		Message:             created.Message,
 		CreatedAt:           created.CreatedAt,
 		DeletionRequestedAt: created.DeletionRequestedAt,
 	})
