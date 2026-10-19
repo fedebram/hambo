@@ -4,13 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/fedebram/hambo/client"
 	"github.com/fedebram/hambo/internal/worker"
 	"github.com/spf13/cobra"
 )
 
 func newJoinCommand() *cobra.Command {
-
 	var serverURL string
 	var joinToken string
 	var name string
@@ -19,15 +20,15 @@ func newJoinCommand() *cobra.Command {
 		Short: "Join a Hambo cluster",
 		Args:  cobra.NoArgs,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if joinToken == "" {
-				return errors.New("--token is required")
-			}
-			if name == "" {
+			if !cmd.Flags().Changed("name") {
 				hostname, err := os.Hostname()
 				if err != nil {
 					return fmt.Errorf("get hostname: %w", err)
 				}
 				name = hostname
+			}
+			if strings.TrimSpace(name) == "" {
+				return errors.New("--name must not be empty")
 			}
 			return nil
 		},
@@ -37,16 +38,33 @@ func newJoinCommand() *cobra.Command {
 				return err
 			}
 
-			if err := worker.Join(cmd.Context(), worker.JoinConfig{
-				ServerURL: serverURL,
+			parsedServerURL, err := client.ParseServerURL(serverURL)
+			if err != nil {
+				return fmt.Errorf("--server: %w", err)
+			}
+
+			result, err := worker.Join(cmd.Context(), worker.JoinConfig{
+				ServerURL: parsedServerURL,
 				Token:     joinToken,
 				Name:      name,
 				DataDir:   dataDir,
-			}); err != nil {
+			})
+			if err != nil {
 				return err
 			}
 
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Worker joined the cluster")
+			if result.AlreadyConfigured {
+				message := fmt.Sprintf("Worker already configured as node %s", result.NodeID)
+				if joinToken != "" {
+					message += "; supplied token was not used"
+				}
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), message)
+				return err
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(),
+				"Worker joined as node %s\n", result.NodeID,
+			)
 			return err
 		},
 	}
@@ -61,7 +79,7 @@ func newJoinCommand() *cobra.Command {
 		&joinToken,
 		"token",
 		"",
-		"Node join token",
+		"Node join token (required for new enrollment)",
 	)
 	cmd.Flags().StringVar(
 		&name,

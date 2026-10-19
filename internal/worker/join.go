@@ -9,7 +9,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/fedebram/hambo/api"
 	"github.com/fedebram/hambo/client"
@@ -18,101 +20,87 @@ import (
 )
 
 type JoinConfig struct {
-	ServerURL string
+	ServerURL *url.URL
 	Token     string
 	Name      string
 	DataDir   string
 }
 
-// the join is idempotent! as long as the token is not expired. If there is something wrong during the enrollment, the enrollment state is saved.
-// recall join retrieves the saved state and retry to enroll.
-
-func Join(ctx context.Context, cfg JoinConfig) error {
-	joinToken, err := token.Parse(cfg.Token)
-	if err != nil {
-		return fmt.Errorf("parse join token: %w", err)
-	}
-
-	pending, err := prepareEnrollment(cfg)
-	if err != nil {
-		return err
-	}
-
-	ca, err := client.FetchAndVerifyCA(
-		ctx,
-		pending.ServerURL,
-		joinToken.CAFingerprint,
-	)
-	if err != nil {
-		return fmt.Errorf("fetch and verify CA: %w", err)
-	}
-
-	response, err := client.JoinNode(
-		ctx,
-		pending.ServerURL,
-		ca,
-		joinToken.Secret,
-		api.JoinNodeRequest{
-			Name: pending.Name,
-			CSR:  pending.CSR,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("join node: %w", err)
-	}
-
-	if _, err := tls.X509KeyPair(
-		[]byte(response.Certificate),
-		[]byte(pending.PrivateKey),
-	); err != nil {
-		return fmt.Errorf("parse worker certificate and key: %w", err)
-	}
-
-	pending.NodeID = response.NodeID
-	pending.Certificate = response.Certificate
-	pending.CACertificate = string(pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: ca.Raw,
-	}))
-
-	// keep the private key; enrollment retry data is no longer needed.
-	pending.Token = ""
-	pending.CSR = nil
-
-	if err := saveState(cfg.DataDir, pending); err != nil {
-		return fmt.Errorf("save worker credentials: %w", err)
-	}
-
-	return nil
-
+type JoinResult struct {
+	NodeID            string
+	AlreadyConfigured bool
 }
 
-func prepareEnrollment(cfg JoinConfig) (*state, error) {
+func Join(ctx context.Context, cfg JoinConfig) (JoinResult, error) {
 	saved, err := loadState(cfg.DataDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+		return JoinResult{}, err
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		if strings.TrimSpace(cfg.Token) == "" {
+			return JoinResult{}, errors.New("join token is required for enrollment")
+		}
+		joinToken, err := token.Parse(cfg.Token)
+		if err != nil {
+			return JoinResult{}, fmt.Errorf("parse join token: %w", err)
+		}
+
+		pending, err := newEnrollment(cfg)
+		if err != nil {
+			return JoinResult{}, err
+		}
+
+		// save before contacting the server so an interrupted enrollment can be retried
+		if err := saveState(cfg.DataDir, pending); err != nil {
+			return JoinResult{}, err
+		}
+
+		return enroll(ctx, cfg, pending, joinToken)
 	}
 
-	if err == nil {
-		if saved.NodeID != "" {
-			return nil, errors.New("worker has already joined")
-		}
-		if saved.Token == cfg.Token {
-			if saved.ServerURL != cfg.ServerURL || saved.Name != cfg.Name {
-				return nil, errors.New(
-					"server or name differs from the saved enrollment",
-				)
-			}
-			if saved.PrivateKey == "" || len(saved.CSR) == 0 {
-				return nil, errors.New("saved enrollment is incomplete")
-			}
-
-			return saved, nil
-		}
+	if saved.ServerURL != cfg.ServerURL.String() || saved.Name != cfg.Name {
+		return JoinResult{}, errors.New(
+			"server or name differs from saved enrollment: run reset first",
+		)
 	}
 
-	// no saved enrollment attempt or different token -> create a new enrollment
+	// resume the saved pending enrollment.
+	if saved.NodeID == "" {
+		// a pending enrollment shouldn't contain completed credentials
+		if saved.Certificate != "" || saved.CACertificate != "" {
+			return JoinResult{}, errors.New("saved enrollment state is inconsistent")
+		}
 
+		// check the fields needed to resume the original request
+		if saved.Token == "" ||
+			saved.PrivateKey == "" ||
+			len(saved.CSR) == 0 {
+			return JoinResult{}, errors.New("saved enrollment is incomplete")
+		}
+		if cfg.Token != "" && cfg.Token != saved.Token {
+			return JoinResult{}, errors.New(
+				"token differs from saved enrollment: run reset first",
+			)
+		}
+
+		joinToken, err := token.Parse(saved.Token)
+		if err != nil {
+			return JoinResult{}, fmt.Errorf("parse join token: %w", err)
+		}
+
+		return enroll(ctx, cfg, saved, joinToken)
+	}
+
+	// completed enrollment: check that the required credentials are present
+	if saved.PrivateKey == "" ||
+		saved.Certificate == "" ||
+		saved.CACertificate == "" {
+		return JoinResult{}, errors.New("saved worker credentials are incomplete")
+	}
+	return JoinResult{NodeID: saved.NodeID, AlreadyConfigured: true}, nil
+}
+
+func newEnrollment(cfg JoinConfig) (*state, error) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generate worker private key: %w", err)
@@ -129,7 +117,7 @@ func prepareEnrollment(cfg JoinConfig) (*state, error) {
 	}
 
 	pending := &state{
-		ServerURL: cfg.ServerURL,
+		ServerURL: cfg.ServerURL.String(),
 		Token:     cfg.Token,
 		Name:      cfg.Name,
 		PrivateKey: string(pem.EncodeToMemory(&pem.Block{
@@ -139,9 +127,53 @@ func prepareEnrollment(cfg JoinConfig) (*state, error) {
 		CSR: csr,
 	}
 
-	if err := saveState(cfg.DataDir, pending); err != nil {
-		return nil, err
+	return pending, nil
+}
+
+func enroll(ctx context.Context, cfg JoinConfig, pending *state, joinToken token.Token) (JoinResult, error) {
+	ca, err := client.FetchAndVerifyCA(
+		ctx,
+		cfg.ServerURL,
+		joinToken.CAFingerprint,
+	)
+	if err != nil {
+		return JoinResult{}, fmt.Errorf("fetch and verify CA: %w", err)
 	}
 
-	return pending, nil
+	response, err := client.JoinNode(
+		ctx,
+		cfg.ServerURL,
+		ca,
+		joinToken.Secret,
+		api.JoinNodeRequest{
+			Name: pending.Name,
+			CSR:  pending.CSR,
+		},
+	)
+	if err != nil {
+		return JoinResult{}, fmt.Errorf("join node: %w", err)
+	}
+
+	if _, err := tls.X509KeyPair(
+		[]byte(response.Certificate),
+		[]byte(pending.PrivateKey),
+	); err != nil {
+		return JoinResult{}, fmt.Errorf("parse worker certificate and key: %w", err)
+	}
+
+	pending.NodeID = response.NodeID
+	pending.Certificate = response.Certificate
+	pending.CACertificate = string(pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: ca.Raw,
+	}))
+	// completed credentials. No need for token and csr.
+	pending.Token = ""
+	pending.CSR = nil
+
+	if err := saveState(cfg.DataDir, pending); err != nil {
+		return JoinResult{}, fmt.Errorf("save worker credentials: %w", err)
+	}
+
+	return JoinResult{NodeID: pending.NodeID}, nil
 }
