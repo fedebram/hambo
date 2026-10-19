@@ -15,18 +15,7 @@ import (
 	"time"
 )
 
-func FetchAndVerifyCA(ctx context.Context, serverURL string, expectedFingerprint string) (*x509.Certificate, error) {
-	u, err := url.Parse(serverURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse server URL: %w", err)
-	}
-	if u.Scheme != "https" || u.Hostname() == "" {
-		return nil, errors.New("server URL must use HTTPS and include a hostname")
-	}
-	if u.User != nil {
-		return nil, errors.New("server URL must not contain credentials")
-	}
-
+func FetchAndVerifyCA(ctx context.Context, serverURL *url.URL, expectedFingerprint string) (*x509.Certificate, error) {
 	if expectedFingerprint == "" {
 		return nil, errors.New("CA fingerprint is required")
 	}
@@ -49,7 +38,7 @@ func FetchAndVerifyCA(ctx context.Context, serverURL string, expectedFingerprint
 	defer httpClient.CloseIdleConnections()
 
 	req, err := http.NewRequestWithContext(
-		ctx, http.MethodGet, u.JoinPath("ca").String(), nil,
+		ctx, http.MethodGet, serverURL.JoinPath("ca").String(), nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create CA request: %w", err)

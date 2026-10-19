@@ -29,24 +29,9 @@ type Config struct {
 }
 
 func NewClient(cfg Config) (*Client, error) {
-	if cfg.ServerURL == "" {
-		return nil, errors.New("base URL cannot be empty")
-	}
-
-	u, err := url.Parse(cfg.ServerURL)
+	u, err := ParseServerURL(cfg.ServerURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse base URL: %w", err)
-	}
-
-	if u.Scheme != "https" {
-		return nil, fmt.Errorf("unsupported URL scheme %q: HTTPS required", u.Scheme)
-	}
-
-	if u.Hostname() == "" {
-		return nil, errors.New("base URL must include a hostname")
-	}
-	if u.User != nil {
-		return nil, errors.New("base URL must not contain credentials")
+		return nil, fmt.Errorf("server URL: %w", err)
 	}
 
 	roots := x509.NewCertPool()
