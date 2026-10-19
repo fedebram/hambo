@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -45,31 +46,28 @@ func newRootCommand() (*cobra.Command, error) {
 		configPath = filepath.Join(configDir, "hambo", "config.yaml")
 	}
 
-	cfg := cliConfig{configPath: configPath}
 	root := &cobra.Command{
 		Use:   "hambo",
 		Short: "Manage containers and images",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if cfg.configPath == "" {
+			path, err := cmd.Flags().GetString("config")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(path) == "" {
 				return fmt.Errorf("--config must not be empty")
 			}
 			return nil
 		},
 	}
 
-	root.PersistentFlags().StringVar(
-		&cfg.configPath,
+	root.PersistentFlags().String(
 		"config",
-		cfg.configPath,
+		configPath,
 		"Path to configuration file",
 	)
-
-	root.AddCommand(newHealthCommand(&cfg))
-	root.AddCommand(newTokenCommand(&cfg))
+	root.AddCommand(newHealthCommand())
+	root.AddCommand(newTokenCommand())
 
 	return root, nil
-}
-
-type cliConfig struct {
-	configPath string
 }

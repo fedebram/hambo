@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -29,7 +31,23 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "hambo-server",
 		Short: "Run and initialize the Hambo server",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			dataDir, err := cmd.Flags().GetString("data-dir")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(dataDir) == "" {
+				return errors.New("--data-dir must not be empty")
+			}
+			return nil
+		},
 	}
+
+	root.PersistentFlags().String(
+		"data-dir",
+		defaultDataDir,
+		"Directory for persistent server data",
+	)
 
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newServeCommand())

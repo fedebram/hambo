@@ -8,17 +8,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newTokenCommand(cfg *cliConfig) *cobra.Command {
+func newTokenCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "token",
 		Short: "Manage node join tokens",
 	}
 
-	cmd.AddCommand(newTokenCreateCommand(cfg))
+	cmd.AddCommand(newTokenCreateCommand())
 	return cmd
 }
 
-func newTokenCreateCommand(cfg *cliConfig) *cobra.Command {
+func newTokenCreateCommand() *cobra.Command {
 	var ttl time.Duration
 
 	cmd := &cobra.Command{
@@ -32,7 +32,7 @@ func newTokenCreateCommand(cfg *cliConfig) *cobra.Command {
 				)
 			}
 
-			apiClient, cleanup, err := newAPIClient(cfg.configPath)
+			apiClient, cleanup, err := newAPIClient(cmd)
 			if err != nil {
 				return err
 			}

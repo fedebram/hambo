@@ -3,9 +3,14 @@ package main
 import (
 	"github.com/fedebram/hambo/client"
 	"github.com/fedebram/hambo/internal/cliconfig"
+	"github.com/spf13/cobra"
 )
 
-func newAPIClient(configPath string) (*client.Client, func(), error) {
+func newAPIClient(cmd *cobra.Command) (*client.Client, func(), error) {
+	configPath, err := cmd.Flags().GetString("config")
+	if err != nil {
+		return nil, nil, err
+	}
 	cfg, err := cliconfig.Load(configPath)
 	if err != nil {
 		return nil, nil, err

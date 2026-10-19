@@ -26,15 +26,14 @@ const (
 )
 
 func newServeCommand() *cobra.Command {
-	var dataDir string
-
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the Hambo server",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if dataDir == "" {
-				return errors.New("data directory cannot be empty")
+			dataDir, err := cmd.Flags().GetString("data-dir")
+			if err != nil {
+				return err
 			}
 			slog.Info("starting hambo server", "address", "https://"+defaultAddress)
 
@@ -47,8 +46,6 @@ func newServeCommand() *cobra.Command {
 			return nil
 		},
 	}
-
-	cmd.Flags().StringVar(&dataDir, "data-dir", defaultDataDir, "Directory for persistent server data")
 	return cmd
 }
 

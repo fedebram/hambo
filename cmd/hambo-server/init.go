@@ -14,15 +14,14 @@ import (
 )
 
 func newInitCommand() *cobra.Command {
-	var dataDir string
-
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize server credentials and administrator CLI configuration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (initErr error) {
-			if dataDir == "" {
-				return errors.New("data directory cannot be empty")
+			dataDir, err := cmd.Flags().GetString("data-dir")
+			if err != nil {
+				return err
 			}
 
 			now := time.Now()
@@ -99,7 +98,5 @@ func newInitCommand() *cobra.Command {
 			return nil
 		},
 	}
-
-	cmd.Flags().StringVar(&dataDir, "data-dir", defaultDataDir, "Directory for persistent server data")
 	return cmd
 }
