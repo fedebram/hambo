@@ -145,10 +145,7 @@ func (srv *server) joinNodeHandler(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		nodeID, err := node.GenerateNodeID()
-		if err != nil {
-			return err
-		}
+		nodeID := node.GenerateNodeID()
 
 		certificate, err := srv.ca.IssueNodeCertificate(now, nodeID, request.CSR)
 		if err != nil {

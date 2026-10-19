@@ -3,7 +3,6 @@ package node
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"time"
 )
 
@@ -22,12 +21,8 @@ func (n Node) IsReachable(now time.Time) bool {
 		now.Before(n.LastSeenAt.Add(heartbeatMaxAge))
 }
 
-func GenerateNodeID() (string, error) {
-	idBytes := make([]byte, 16)
-	// panic..
-	if _, err := rand.Read(idBytes); err != nil {
-		return "", fmt.Errorf("generate node ID: %w", err)
-	}
-	nodeID := hex.EncodeToString(idBytes)
-	return nodeID, nil
+func GenerateNodeID() string {
+	var id [16]byte
+	rand.Read(id[:])
+	return hex.EncodeToString(id[:])
 }
