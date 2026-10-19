@@ -50,6 +50,7 @@ func newRootCommand() *cobra.Command {
 	)
 
 	root.AddCommand(newJoinCommand())
+	root.AddCommand(newResetCommand())
 	root.AddCommand(newStartCommand())
 
 	return root
