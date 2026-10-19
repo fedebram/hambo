@@ -10,6 +10,12 @@ import (
 )
 
 func Start(ctx context.Context, dataDir string) error {
+	lock, err := lockDataDir(dataDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
 	saved, err := loadState(dataDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return errors.New("worker has not joined: run hambo-worker join first")

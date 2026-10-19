@@ -32,6 +32,12 @@ type JoinResult struct {
 }
 
 func Join(ctx context.Context, cfg JoinConfig) (JoinResult, error) {
+	lock, err := lockDataDir(cfg.DataDir)
+	if err != nil {
+		return JoinResult{}, err
+	}
+	defer lock.Close()
+
 	saved, err := loadState(cfg.DataDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return JoinResult{}, err
