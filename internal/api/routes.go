@@ -21,6 +21,9 @@ func (srv *server) addRoutes() {
 	srv.mux.Handle("POST /tokens",
 		srv.adminOnly(http.HandlerFunc(srv.createTokenHandler)))
 
+	srv.mux.Handle("POST /containers",
+		srv.adminOnly(http.HandlerFunc(srv.createContainerHandler)))
+
 	// fallback. we need this because we verify the client cert only if it is given.
 	// this way some routes (like /ca) can work on normal https (no mtls).
 	srv.mux.Handle("/",

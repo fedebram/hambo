@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/fedebram/hambo/internal/container"
 	"github.com/fedebram/hambo/internal/node"
 	"github.com/fedebram/hambo/internal/pki"
 	"github.com/fedebram/hambo/internal/store"
@@ -12,12 +13,13 @@ import (
 )
 
 type server struct {
-	mux    *http.ServeMux
-	logger *slog.Logger
-	db     *store.Store
-	tokens *store.Collection[token.Metadata]
-	nodes  *store.Collection[node.Node]
-	ca     *pki.CA
+	mux        *http.ServeMux
+	logger     *slog.Logger
+	db         *store.Store
+	tokens     *store.Collection[token.Metadata]
+	nodes      *store.Collection[node.Node]
+	containers *store.Collection[container.Container]
+	ca         *pki.CA
 }
 
 // Inspired by https://grafana.com/blog/how-i-write-http-services-in-go-after-13-years/
@@ -46,14 +48,19 @@ func newServer(db *store.Store, ca *pki.CA, options ...ServerOption) (*server, e
 	if err != nil {
 		return nil, fmt.Errorf("open node collection: %w", err)
 	}
+	containers, err := store.NewCollection[container.Container](db, "containers")
+	if err != nil {
+		return nil, fmt.Errorf("open containers collection: %w", err)
+	}
 
 	srv := &server{
-		mux:    http.NewServeMux(),
-		logger: slog.Default(),
-		db:     db,
-		tokens: tokens,
-		nodes:  nodes,
-		ca:     ca,
+		mux:        http.NewServeMux(),
+		logger:     slog.Default(),
+		db:         db,
+		tokens:     tokens,
+		nodes:      nodes,
+		containers: containers,
+		ca:         ca,
 	}
 
 	for _, option := range options {
