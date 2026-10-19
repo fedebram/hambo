@@ -21,23 +21,13 @@ import (
 
 func JoinNode(
 	ctx context.Context,
-	serverURL string,
+	serverURL *url.URL,
 	ca *x509.Certificate,
 	secret string,
 	request api.JoinNodeRequest,
 ) (api.JoinNodeResponse, error) {
 	var zero api.JoinNodeResponse
 
-	u, err := url.Parse(serverURL)
-	if err != nil {
-		return zero, fmt.Errorf("parse server URL: %w", err)
-	}
-	if u.Scheme != "https" || u.Hostname() == "" {
-		return zero, errors.New("server URL must use HTTPS and include a hostname")
-	}
-	if u.User != nil {
-		return zero, errors.New("server URL must not contain credentials")
-	}
 	if ca == nil {
 		return zero, errors.New("CA certificate is required")
 	}
@@ -71,7 +61,7 @@ func JoinNode(
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		u.JoinPath("nodes", "join").String(),
+		serverURL.JoinPath("nodes", "join").String(),
 		bytes.NewReader(body),
 	)
 	if err != nil {
