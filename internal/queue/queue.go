@@ -99,6 +99,8 @@ func (q *MemoryQueue) Get() (name string, shutdown bool) {
 	}
 
 	name = q.items[0]
+	// clear the entry so the backing array doesn't keep the old string alive
+	q.items[0] = ""
 	q.items = q.items[1:]
 	delete(q.dirty, name)
 	q.processing[name] = struct{}{}
