@@ -70,7 +70,12 @@ type NodeWatchResponse struct {
 	Containers []ContainerAssignment `json:"containers"`
 }
 
+type CreateNodeSessionResponse struct {
+	SessionID string `json:"session_id"`
+}
+
 type ReportNodeStatusRequest struct {
+	SessionID    string                  `json:"session_id"`
 	Sequence     uint64                  `json:"sequence"`
 	RuntimeReady bool                    `json:"runtime_ready"`
 	Containers   []ContainerStatusReport `json:"containers"`

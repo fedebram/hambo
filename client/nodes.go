@@ -16,8 +16,14 @@ import (
 	"github.com/fedebram/hambo/api"
 )
 
-func (c *Client) ReportNodeStatus(ctx context.Context) error {
-	return c.do(ctx, http.MethodPost, "nodes/self/status", nil, nil)
+func (c *Client) CreateNodeSession(ctx context.Context) (api.CreateNodeSessionResponse, error) {
+	var response api.CreateNodeSessionResponse
+	err := c.do(ctx, http.MethodPost, "nodes/self/session", nil, &response)
+	return response, err
+}
+
+func (c *Client) ReportNodeStatus(ctx context.Context, request api.ReportNodeStatusRequest) error {
+	return c.do(ctx, http.MethodPost, "nodes/self/status", request, nil)
 }
 
 // TODO: there are many repetitions here and also on fetch ca function. we need a way to unify everything.

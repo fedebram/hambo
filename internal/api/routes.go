@@ -12,6 +12,9 @@ func (srv *server) addRoutes() {
 	srv.mux.Handle("GET /nodes/self/watch",
 		srv.nodeOnly(http.HandlerFunc(srv.watchNodeHandler)))
 
+	srv.mux.Handle("POST /nodes/self/session",
+		srv.nodeOnly(http.HandlerFunc(srv.createNodeSessionHandler)))
+
 	srv.mux.Handle("POST /nodes/self/status",
 		srv.nodeOnly(http.HandlerFunc(srv.reportNodeStatusHandler)))
 

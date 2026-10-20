@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fedebram/hambo/api"
 	"github.com/fedebram/hambo/client"
 	"github.com/fedebram/hambo/errdefs"
 )
@@ -19,7 +20,9 @@ const (
 )
 
 type Worker struct {
-	client *client.Client
+	client    *client.Client
+	sessionID string
+	sequence  uint64
 }
 
 func NewWorker(apiClient *client.Client) *Worker {
@@ -30,6 +33,18 @@ func NewWorker(apiClient *client.Client) *Worker {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
+	requestCtx, cancelSession := context.WithTimeout(ctx, heartbeatRequestTimeout)
+	session, err := w.client.CreateNodeSession(requestCtx)
+	cancelSession()
+	if ctx.Err() != nil {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("create node session: %w", err)
+	}
+	w.sessionID = session.SessionID
+	w.sequence = 1
+
 	// we can use err group. but maybe is better like that...
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -55,25 +70,38 @@ func (w *Worker) runHeartbeat(ctx context.Context) error {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
+	report := api.ReportNodeStatusRequest{
+		SessionID:    w.sessionID,
+		Sequence:     w.sequence,
+		RuntimeReady: false,
+		Containers:   []api.ContainerStatusReport{},
+	}
 	for {
+		if w.sequence == 0 {
+			return errors.New("node status sequence exhausted")
+		}
+		report.Sequence = w.sequence
 		requestCtx, cancel := context.WithTimeout(
 			ctx, heartbeatRequestTimeout,
 		)
-		err := w.client.ReportNodeStatus(requestCtx)
+		err := w.client.ReportNodeStatus(requestCtx, report)
 		cancel()
 
 		if ctx.Err() != nil {
 			return nil
 		}
-
 		if err != nil {
-			if errors.Is(err, errdefs.ErrUnauthenticated) ||
+			if errors.Is(err, errdefs.ErrConflict) ||
+				errors.Is(err, errdefs.ErrInvalidArgument) ||
+				errors.Is(err, errdefs.ErrUnauthenticated) ||
 				errors.Is(err, errdefs.ErrPermissionDenied) ||
 				errors.Is(err, errdefs.ErrNotFound) {
 				return fmt.Errorf("report node status: %w", err)
 			}
-
+			// Retry transient failures with the same report and sequence.
 			slog.Warn("could not report node status", "error", err)
+		} else {
+			w.sequence++
 		}
 
 		select {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -296,6 +297,47 @@ func (srv *server) watchNodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (srv *server) createNodeSessionHandler(w http.ResponseWriter, r *http.Request) {
+	nodeID, ok := nodeIDFromContext(r.Context())
+	if !ok {
+		srv.logger.Error("node identity missing from request context")
+		srv.writeErrorJSON(
+			w, http.StatusInternalServerError,
+			"could not create node session",
+		)
+		return
+	}
+
+	var id [16]byte
+	rand.Read(id[:])
+	sessionID := hex.EncodeToString(id[:])
+
+	err := srv.nodes.Modify(nodeID, func(current *node.Node) error {
+		// A new worker run requests a new session!
+		current.StatusSessionID = sessionID
+		current.StatusSequence = 0
+		current.RuntimeReady = false
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			srv.writeErrorJSON(w, http.StatusNotFound, "node not found")
+			return
+		}
+		srv.logger.Error("create node session", "node_id", nodeID, "error", err)
+		srv.writeErrorJSON(
+			w, http.StatusInternalServerError,
+			"could not create node session",
+		)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	srv.writeJSON(w, http.StatusCreated, publicapi.CreateNodeSessionResponse{
+		SessionID: sessionID,
+	})
+}
+
 func (srv *server) reportNodeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	nodeID, ok := nodeIDFromContext(r.Context())
 	if !ok {
@@ -314,6 +356,12 @@ func (srv *server) reportNodeStatusHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if strings.TrimSpace(request.SessionID) == "" {
+		srv.writeValidationErrorJSON(w, map[string]string{
+			"session_id": "must not be empty",
+		})
+		return
+	}
 	if request.Sequence == 0 {
 		srv.writeValidationErrorJSON(w, map[string]string{
 			"sequence": "must be greater than zero",
@@ -355,9 +403,12 @@ func (srv *server) reportNodeStatusHandler(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
+		if request.SessionID != currentNode.StatusSessionID {
+			return errdefs.ErrConflict
+		}
 		// Reports may arrive out of order after delays or retries.
 		// The sequence prevents older reports from overwriting newer observations.
-		if request.Sequence <= currentNode.LastStatusSequence {
+		if request.Sequence <= currentNode.StatusSequence {
 			// Basically ignore stale reports
 			return nil
 		}
@@ -406,10 +457,17 @@ func (srv *server) reportNodeStatusHandler(w http.ResponseWriter, r *http.Reques
 		now := time.Now().UTC()
 		currentNode.LastSeenAt = &now
 		currentNode.RuntimeReady = request.RuntimeReady
-		currentNode.LastStatusSequence = request.Sequence
+		currentNode.StatusSequence = request.Sequence
 		return srv.nodes.UpdateTx(tx, nodeID, currentNode)
 	})
 	if err != nil {
+		if errors.Is(err, errdefs.ErrConflict) {
+			srv.writeErrorJSON(
+				w, http.StatusConflict,
+				"node reporting session is no longer current; create a new session",
+			)
+			return
+		}
 		if errors.Is(err, errdefs.ErrPermissionDenied) {
 			srv.writeErrorJSON(
 				w, http.StatusForbidden,
