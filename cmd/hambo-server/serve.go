@@ -143,6 +143,11 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 func runServer(ctx context.Context, listener net.Listener, handler http.Handler, gracePeriod time.Duration, certFile, keyFile string, clientCAs *x509.CertPool) error {
 	server := &http.Server{
 		Handler: handler,
+		// we share the server context with the requests!
+		// so shutting down will trigger also a request context done.
+		BaseContext: func(net.Listener) context.Context {
+			return ctx
+		},
 		TLSConfig: &tls.Config{
 			ClientCAs: clientCAs,
 			// this way we can have normal https routes and mtls routes.
