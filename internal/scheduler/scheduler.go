@@ -106,7 +106,7 @@ func (s *Scheduler) assign(containerID string) error {
 
 		for _, entry := range nodes {
 			n := entry.Value
-			if !n.IsReachable(now) {
+			if !n.IsReachable(now) || !n.RuntimeReady {
 				continue
 			}
 
