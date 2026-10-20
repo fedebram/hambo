@@ -59,3 +59,7 @@ const (
 	ContainerStateRunning ContainerState = "running"
 	ContainerStateExited  ContainerState = "exited"
 )
+
+type NodeWatchResponse struct {
+	Containers []ContainerResponse `json:"containers"`
+}

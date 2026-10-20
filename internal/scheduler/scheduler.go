@@ -10,15 +10,17 @@ import (
 	"github.com/fedebram/hambo/internal/node"
 	"github.com/fedebram/hambo/internal/queue"
 	"github.com/fedebram/hambo/internal/store"
+	"github.com/fedebram/hambo/internal/watch"
 
 	bolt "go.etcd.io/bbolt"
 )
 
 type Scheduler struct {
-	db         *store.Store
-	nodes      *store.Collection[node.Node]
-	containers *store.Collection[container.Container]
-	queue      queue.Queue
+	db          *store.Store
+	nodes       *store.Collection[node.Node]
+	containers  *store.Collection[container.Container]
+	queue       queue.Queue
+	nodeWatcher *watch.NodeWatcher
 }
 
 func NewScheduler(
@@ -26,6 +28,7 @@ func NewScheduler(
 	workQueue queue.Queue,
 	nodes *store.Collection[node.Node],
 	containers *store.Collection[container.Container],
+	nodeWatcher *watch.NodeWatcher,
 ) *Scheduler {
 	if db == nil {
 		panic("scheduler: db cannot be nil")
@@ -39,12 +42,16 @@ func NewScheduler(
 	if containers == nil {
 		panic("scheduler: containers collection cannot be nil")
 	}
+	if nodeWatcher == nil {
+		panic("scheduler: node watcher cannot be nil")
+	}
 
 	return &Scheduler{
-		db:         db,
-		nodes:      nodes,
-		containers: containers,
-		queue:      workQueue,
+		db:          db,
+		nodes:       nodes,
+		containers:  containers,
+		queue:       workQueue,
+		nodeWatcher: nodeWatcher,
 	}
 }
 
@@ -56,6 +63,7 @@ var errNoReachableNodes = errors.New("no reachable nodes")
 
 func (s *Scheduler) assign(containerID string) error {
 	retry := false
+	var assignedNodeID string
 
 	err := s.db.WriteTx(func(tx *bolt.Tx) error {
 		current, err := s.containers.GetTx(tx, containerID)
@@ -127,10 +135,20 @@ func (s *Scheduler) assign(containerID string) error {
 		current.Reason = ""
 		current.Message = ""
 
-		return s.containers.UpdateTx(tx, containerID, current)
+		if err := s.containers.UpdateTx(tx, containerID, current); err != nil {
+			return err
+		}
+		assignedNodeID = selectedNodeID
+		return nil
 	})
 	if err != nil {
 		return err
+	}
+
+	if assignedNodeID != "" {
+		if err := s.nodeWatcher.Notify(assignedNodeID); err != nil {
+			return err
+		}
 	}
 
 	if retry {

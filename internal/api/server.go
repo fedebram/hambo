@@ -11,6 +11,7 @@ import (
 	"github.com/fedebram/hambo/internal/queue"
 	"github.com/fedebram/hambo/internal/store"
 	"github.com/fedebram/hambo/internal/token"
+	"github.com/fedebram/hambo/internal/watch"
 )
 
 type server struct {
@@ -23,6 +24,7 @@ type server struct {
 	ca         *pki.CA
 
 	schedulingQueue queue.Queue
+	nodeWatcher     *watch.NodeWatcher
 }
 
 // Inspired by https://grafana.com/blog/how-i-write-http-services-in-go-after-13-years/
@@ -33,9 +35,10 @@ func NewServer(
 	schedulingQueue queue.Queue,
 	nodes *store.Collection[node.Node],
 	containers *store.Collection[container.Container],
+	nodeWatcher *watch.NodeWatcher,
 	options ...ServerOption,
 ) (http.Handler, error) {
-	srv, err := newServer(db, ca, schedulingQueue, nodes, containers, options...)
+	srv, err := newServer(db, ca, schedulingQueue, nodes, containers, nodeWatcher, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +51,7 @@ func newServer(
 	schedulingQueue queue.Queue,
 	nodes *store.Collection[node.Node],
 	containers *store.Collection[container.Container],
+	nodeWatcher *watch.NodeWatcher,
 	options ...ServerOption,
 ) (*server, error) {
 	if db == nil {
@@ -65,6 +69,9 @@ func newServer(
 	if containers == nil {
 		panic("api: containers collection cannot be nil")
 	}
+	if nodeWatcher == nil {
+		panic("api: node watcher cannot be nil")
+	}
 
 	tokens, err := store.NewCollection[token.Metadata](db, "tokens")
 	if err != nil {
@@ -79,6 +86,7 @@ func newServer(
 		containers:      containers,
 		ca:              ca,
 		schedulingQueue: schedulingQueue,
+		nodeWatcher:     nodeWatcher,
 	}
 
 	for _, option := range options {

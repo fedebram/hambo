@@ -22,6 +22,7 @@ import (
 	"github.com/fedebram/hambo/internal/queue"
 	"github.com/fedebram/hambo/internal/scheduler"
 	"github.com/fedebram/hambo/internal/store"
+	"github.com/fedebram/hambo/internal/watch"
 )
 
 const (
@@ -92,7 +93,11 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 	schedulingQueue := queue.NewMemoryQueue()
 	defer schedulingQueue.Shutdown()
 
-	handler, err := api.NewServer(db, ca, schedulingQueue, nodes, containers)
+	nodeWatcher := watch.NewNodeWatcher()
+
+	handler, err := api.NewServer(
+		db, ca, schedulingQueue, nodes, containers, nodeWatcher,
+	)
 	if err != nil {
 		return fmt.Errorf("create API server: %w", err)
 	}
@@ -103,7 +108,9 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 	}
 	defer listener.Close()
 
-	containerScheduler := scheduler.NewScheduler(db, schedulingQueue, nodes, containers)
+	containerScheduler := scheduler.NewScheduler(
+		db, schedulingQueue, nodes, containers, nodeWatcher,
+	)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

@@ -218,9 +218,88 @@ func joinNodeRequestHash(request publicapi.JoinNodeRequest) (string, error) {
 }
 
 func (srv *server) watchNodeHandler(w http.ResponseWriter, r *http.Request) {
-	srv.writeErrorJSON(
-		w, http.StatusNotImplemented, "node watch is not implemented",
-	)
+	nodeID, ok := nodeIDFromContext(r.Context())
+	if !ok {
+		srv.logger.Error("node identity missing from request context")
+		srv.writeErrorJSON(
+			w, http.StatusInternalServerError,
+			"could not watch node assignments",
+		)
+		return
+	}
+
+	stream, ok := startJSONStream(w, http.StatusOK)
+	if !ok {
+		srv.logger.Error("response writer does not support streaming")
+		srv.writeErrorJSON(
+			w, http.StatusInternalServerError,
+			"could not start node watch",
+		)
+		return
+	}
+	for {
+		if r.Context().Err() != nil {
+			return
+		}
+
+		// watch before reading, so a change during the read wakes us again
+		changed, err := srv.nodeWatcher.Watch(nodeID)
+		if err != nil {
+			srv.logger.Error("watch node assignments", "error", err)
+			return
+		}
+
+		entries, err := srv.containers.List()
+		if err != nil {
+			srv.logger.Error("load node assignments", "error", err)
+			return
+		}
+
+		response := publicapi.NodeWatchResponse{
+			Containers: make([]publicapi.ContainerResponse, 0),
+		}
+
+		for _, entry := range entries {
+			c := entry.Value
+			if c.NodeID != nodeID {
+				continue
+			}
+
+			// we send the full snashot everytime.
+			// later we can optmize sending only the changes.
+			// something like:
+			// - first call = full snashot
+			// - subsequent calls = deltas
+			response.Containers = append(
+				response.Containers,
+				publicapi.ContainerResponse{
+					ID:                  c.ID,
+					Name:                c.Name,
+					Image:               c.Image,
+					NodeID:              c.NodeID,
+					State:               publicapi.ContainerState(c.State),
+					ExitCode:            c.ExitCode,
+					Reason:              c.Reason,
+					Message:             c.Message,
+					CreatedAt:           c.CreatedAt,
+					DeletionRequestedAt: c.DeletionRequestedAt,
+				},
+			)
+		}
+
+		if err := stream.Write(response); err != nil {
+			if r.Context().Err() == nil {
+				srv.logger.Error("write node assignments", "error", err)
+			}
+			return
+		}
+
+		select {
+		case <-r.Context().Done():
+			return
+		case <-changed:
+		}
+	}
 }
 
 func (srv *server) reportNodeStatusHandler(w http.ResponseWriter, r *http.Request) {
