@@ -60,6 +60,26 @@ const (
 	ContainerStateExited  ContainerState = "exited"
 )
 
+type ContainerAssignment struct {
+	ID                  string     `json:"id"`
+	Image               string     `json:"image"`
+	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
+}
+
 type NodeWatchResponse struct {
-	Containers []ContainerResponse `json:"containers"`
+	Containers []ContainerAssignment `json:"containers"`
+}
+
+type ReportNodeStatusRequest struct {
+	Sequence     uint64                  `json:"sequence"`
+	RuntimeReady bool                    `json:"runtime_ready"`
+	Containers   []ContainerStatusReport `json:"containers"`
+}
+
+type ContainerStatusReport struct {
+	ID       string         `json:"id"`
+	State    ContainerState `json:"state"`
+	ExitCode *int           `json:"exit_code,omitempty"`
+	Reason   string         `json:"reason,omitempty"`
+	Message  string         `json:"message,omitempty"`
 }

@@ -15,6 +15,7 @@ import (
 
 	publicapi "github.com/fedebram/hambo/api"
 	"github.com/fedebram/hambo/errdefs"
+	"github.com/fedebram/hambo/internal/container"
 	"github.com/fedebram/hambo/internal/node"
 	"github.com/fedebram/hambo/internal/pki"
 	"github.com/fedebram/hambo/internal/store"
@@ -256,7 +257,7 @@ func (srv *server) watchNodeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		response := publicapi.NodeWatchResponse{
-			Containers: make([]publicapi.ContainerResponse, 0),
+			Containers: make([]publicapi.ContainerAssignment, 0),
 		}
 
 		for _, entry := range entries {
@@ -272,16 +273,9 @@ func (srv *server) watchNodeHandler(w http.ResponseWriter, r *http.Request) {
 			// - subsequent calls = deltas
 			response.Containers = append(
 				response.Containers,
-				publicapi.ContainerResponse{
+				publicapi.ContainerAssignment{
 					ID:                  c.ID,
-					Name:                c.Name,
 					Image:               c.Image,
-					NodeID:              c.NodeID,
-					State:               publicapi.ContainerState(c.State),
-					ExitCode:            c.ExitCode,
-					Reason:              c.Reason,
-					Message:             c.Message,
-					CreatedAt:           c.CreatedAt,
 					DeletionRequestedAt: c.DeletionRequestedAt,
 				},
 			)
@@ -313,12 +307,116 @@ func (srv *server) reportNodeStatusHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	err := srv.nodes.Modify(nodeID, func(current *node.Node) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+
+	var request publicapi.ReportNodeStatusRequest
+	if !srv.readJSON(w, r, &request) {
+		return
+	}
+
+	if request.Sequence == 0 {
+		srv.writeValidationErrorJSON(w, map[string]string{
+			"sequence": "must be greater than zero",
+		})
+		return
+	}
+
+	for _, report := range request.Containers {
+		if strings.TrimSpace(report.ID) == "" {
+			srv.writeValidationErrorJSON(w, map[string]string{
+				"containers": "container ID must not be empty",
+			})
+			return
+		}
+		switch report.State {
+		case publicapi.ContainerStatePending,
+			publicapi.ContainerStateRunning,
+			publicapi.ContainerStateExited:
+		default:
+			srv.writeValidationErrorJSON(w, map[string]string{
+				"containers": fmt.Sprintf(
+					"container %q has an unsupported state %q", report.ID, report.State,
+				),
+			})
+			return
+		}
+		if report.ExitCode != nil && report.State != publicapi.ContainerStateExited {
+			srv.writeValidationErrorJSON(w, map[string]string{
+				"containers": fmt.Sprintf(
+					"container %q: exit code requires exited state", report.ID,
+				),
+			})
+			return
+		}
+	}
+
+	err := srv.db.WriteTx(func(tx *bolt.Tx) error {
+		currentNode, err := srv.nodes.GetTx(tx, nodeID)
+		if err != nil {
+			return err
+		}
+		// Reports may arrive out of order after delays or retries.
+		// The sequence prevents older reports from overwriting newer observations.
+		if request.Sequence <= currentNode.LastStatusSequence {
+			// Basically ignore stale reports
+			return nil
+		}
+
+		for _, report := range request.Containers {
+			current, err := srv.containers.GetTx(tx, report.ID)
+			if errors.Is(err, store.ErrNotFound) {
+				// Ignore reports for unknown container IDs.
+				// This can also happen after a container resource is deleted.
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if current.NodeID != nodeID {
+				return fmt.Errorf(
+					"container %q is not assigned to the reporting node: %w",
+					report.ID, errdefs.ErrPermissionDenied,
+				)
+			}
+
+			// Ignore backward lifecycle transitions
+			reportedState := container.State(report.State)
+			backward := (current.State == container.StateExited && reportedState != container.StateExited) ||
+				(current.State == container.StateRunning && reportedState == container.StatePending)
+			if backward {
+				srv.logger.Debug(
+					"ignore backward container status transition",
+					"node_id", nodeID,
+					"container_id", report.ID,
+					"current_state", current.State,
+					"reported_state", report.State,
+				)
+				continue
+			}
+
+			current.State = reportedState
+			current.ExitCode = report.ExitCode
+			current.Reason = report.Reason
+			current.Message = report.Message
+			if err := srv.containers.UpdateTx(tx, report.ID, current); err != nil {
+				return err
+			}
+		}
+
 		now := time.Now().UTC()
-		current.LastSeenAt = &now
-		return nil
+		currentNode.LastSeenAt = &now
+		currentNode.RuntimeReady = request.RuntimeReady
+		currentNode.LastStatusSequence = request.Sequence
+		return srv.nodes.UpdateTx(tx, nodeID, currentNode)
 	})
 	if err != nil {
+		if errors.Is(err, errdefs.ErrPermissionDenied) {
+			srv.writeErrorJSON(
+				w, http.StatusForbidden,
+				"cannot update a container not assigned to this node",
+			)
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			srv.writeErrorJSON(
 				w, http.StatusNotFound, "node not found",
@@ -327,13 +425,13 @@ func (srv *server) reportNodeStatusHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		srv.logger.Error(
-			"record node heartbeat",
+			"record node status",
 			"node_id", nodeID,
 			"error", err,
 		)
 		srv.writeErrorJSON(
 			w, http.StatusInternalServerError,
-			"could not record node heartbeat",
+			"could not record node status",
 		)
 		return
 	}
