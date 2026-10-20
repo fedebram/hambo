@@ -21,6 +21,20 @@ type Client struct {
 	httpClient *http.Client
 }
 
+type JSONStreamReader struct {
+	body    io.ReadCloser
+	decoder *json.Decoder
+}
+
+func (r *JSONStreamReader) Decode(value any) error {
+	// not safe to call concurrently!
+	return r.decoder.Decode(value)
+}
+
+func (r *JSONStreamReader) Close() error {
+	return r.body.Close()
+}
+
 type Config struct {
 	ServerURL     string
 	CACertPEM     []byte
@@ -48,9 +62,10 @@ func NewClient(cfg Config) (*Client, error) {
 		RootCAs:      roots,
 		Certificates: []tls.Certificate{certificate},
 	}
+	// limit waiting for headers without limiting how long a stream can stay open.
+	transport.ResponseHeaderTimeout = 10 * time.Second
 	httpClient := &http.Client{
 		Transport: transport,
-		Timeout:   10 * time.Second,
 	}
 
 	return &Client{
@@ -96,6 +111,30 @@ func (c *Client) do(ctx context.Context, method, path string, input, output any)
 	}
 
 	return drainResponseBody(ctx, resp.Body)
+}
+
+func (c *Client) openStreamReader(ctx context.Context, method, path string, input any) (*JSONStreamReader, error) {
+	req, err := c.newRequest(ctx, method, path, input)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/x-ndjson")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send streaming request: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		return nil, readResponseError(ctx, resp)
+	}
+
+	// the caller owns the response body and must close the reader
+	return &JSONStreamReader{
+		body:    resp.Body,
+		decoder: json.NewDecoder(resp.Body),
+	}, nil
 }
 
 func (c *Client) newRequest(ctx context.Context, method string, path string, input any) (*http.Request, error) {

@@ -105,3 +105,25 @@ func JoinNode(
 
 	return response, nil
 }
+
+type NodeWatchReader struct {
+	reader *JSONStreamReader
+}
+
+func (w *NodeWatchReader) Next() (api.NodeWatchResponse, error) {
+	var response api.NodeWatchResponse
+	err := w.reader.Decode(&response)
+	return response, err
+}
+
+func (w *NodeWatchReader) Close() error {
+	return w.reader.Close()
+}
+
+func (c *Client) WatchNode(ctx context.Context) (*NodeWatchReader, error) {
+	reader, err := c.openStreamReader(ctx, http.MethodGet, "nodes/self/watch", nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NodeWatchReader{reader: reader}, nil
+}
