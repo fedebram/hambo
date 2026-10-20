@@ -68,6 +68,7 @@ func newRootCommand() (*cobra.Command, error) {
 	)
 	root.AddCommand(newHealthCommand())
 	root.AddCommand(newTokenCommand())
+	root.AddCommand(newContainerCommand())
 
 	return root, nil
 }
