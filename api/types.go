@@ -62,6 +62,7 @@ const (
 
 type ContainerAssignment struct {
 	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
 	Image               string     `json:"image"`
 	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
 }

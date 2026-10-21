@@ -150,6 +150,24 @@ func (w *Worker) runWatch(ctx context.Context) error {
 					break
 				}
 
+				listCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				containers, listErr := w.listContainers(listCtx)
+				cancel()
+
+				if listErr != nil {
+					slog.Warn("could not discover Hambo containers", "error", listErr)
+					continue
+				}
+
+				for _, c := range containers {
+					slog.Info(
+						"discovered Hambo container",
+						"container_id", c.Labels[containerIDLabel],
+						"docker_id", c.ID,
+						"state", c.State,
+					)
+				}
+
 				slog.Info(
 					"received node assignments",
 					"container_count", len(snapshot.Containers),

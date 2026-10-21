@@ -276,6 +276,7 @@ func (srv *server) watchNodeHandler(w http.ResponseWriter, r *http.Request) {
 				response.Containers,
 				publicapi.ContainerAssignment{
 					ID:                  c.ID,
+					Name:                c.Name,
 					Image:               c.Image,
 					DeletionRequestedAt: c.DeletionRequestedAt,
 				},
