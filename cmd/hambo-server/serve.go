@@ -21,6 +21,7 @@ import (
 	"github.com/fedebram/hambo/internal/pki"
 	"github.com/fedebram/hambo/internal/queue"
 	"github.com/fedebram/hambo/internal/scheduler"
+	"github.com/fedebram/hambo/internal/sqlitestore"
 	"github.com/fedebram/hambo/internal/store"
 	"github.com/fedebram/hambo/internal/watch"
 )
@@ -80,6 +81,16 @@ func run(ctx context.Context, dataDir string) (runErr error) {
 			runErr = errors.Join(runErr, fmt.Errorf("close db: %w", err))
 		}
 	}()
+
+	litestore, err := sqlitestore.Open("./hambo.db")
+	if err != nil {
+		return err
+	}
+	defer litestore.Close()
+
+	if err := litestore.CreateTables(); err != nil {
+		return err
+	}
 
 	nodes, err := store.NewCollection[node.Node](db, "nodes")
 	if err != nil {
