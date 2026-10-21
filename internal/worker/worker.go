@@ -10,6 +10,7 @@ import (
 	"github.com/fedebram/hambo/api"
 	"github.com/fedebram/hambo/client"
 	"github.com/fedebram/hambo/errdefs"
+	dockerclient "github.com/moby/moby/client"
 )
 
 // relaxed intervals
@@ -20,21 +21,28 @@ const (
 )
 
 type Worker struct {
-	client    *client.Client
+	apiClient *client.Client
+	docker    *dockerclient.Client
 	sessionID string
 	sequence  uint64
 }
 
-func NewWorker(apiClient *client.Client) *Worker {
+func NewWorker(apiClient *client.Client, docker *dockerclient.Client) *Worker {
 	if apiClient == nil {
 		panic("worker: API client cannot be nil")
 	}
-	return &Worker{client: apiClient}
+	if docker == nil {
+		panic("worker: docker client cannot be nil")
+	}
+	return &Worker{
+		apiClient: apiClient,
+		docker:    docker,
+	}
 }
 
 func (w *Worker) Run(ctx context.Context) error {
 	requestCtx, cancelSession := context.WithTimeout(ctx, heartbeatRequestTimeout)
-	session, err := w.client.CreateNodeSession(requestCtx)
+	session, err := w.apiClient.CreateNodeSession(requestCtx)
 	cancelSession()
 	if ctx.Err() != nil {
 		return nil
@@ -71,20 +79,32 @@ func (w *Worker) runHeartbeat(ctx context.Context) error {
 	defer ticker.Stop()
 
 	report := api.ReportNodeStatusRequest{
-		SessionID:    w.sessionID,
-		Sequence:     w.sequence,
-		RuntimeReady: false,
-		Containers:   []api.ContainerStatusReport{},
+		SessionID:  w.sessionID,
+		Containers: []api.ContainerStatusReport{},
 	}
+
 	for {
+		// this is a defensive check
 		if w.sequence == 0 {
 			return errors.New("node status sequence exhausted")
 		}
+
+		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := w.docker.Ping(checkCtx, dockerclient.PingOptions{})
+		cancel()
+
+		if ctx.Err() != nil {
+			return nil
+		}
+
 		report.Sequence = w.sequence
-		requestCtx, cancel := context.WithTimeout(
-			ctx, heartbeatRequestTimeout,
-		)
-		err := w.client.ReportNodeStatus(requestCtx, report)
+		report.RuntimeReady = err == nil
+
+		if err != nil {
+			slog.Warn("container runtime unavailable", "error", err)
+		}
+		requestCtx, cancel := context.WithTimeout(ctx, heartbeatRequestTimeout)
+		err = w.apiClient.ReportNodeStatus(requestCtx, report)
 		cancel()
 
 		if ctx.Err() != nil {
@@ -98,11 +118,10 @@ func (w *Worker) runHeartbeat(ctx context.Context) error {
 				errors.Is(err, errdefs.ErrNotFound) {
 				return fmt.Errorf("report node status: %w", err)
 			}
-			// Retry transient failures with the same report and sequence.
+			// transient failure
 			slog.Warn("could not report node status", "error", err)
-		} else {
-			w.sequence++
 		}
+		w.sequence++
 
 		select {
 		case <-ctx.Done():
@@ -118,7 +137,7 @@ func (w *Worker) runWatch(ctx context.Context) error {
 			return nil
 		}
 
-		reader, err := w.client.WatchNode(ctx)
+		reader, err := w.apiClient.WatchNode(ctx)
 		if err == nil {
 			for {
 				snapshot, readErr := reader.Next()

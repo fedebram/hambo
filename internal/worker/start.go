@@ -7,6 +7,8 @@ import (
 	"os"
 
 	"github.com/fedebram/hambo/client"
+
+	dockerclient "github.com/moby/moby/client"
 )
 
 func Start(ctx context.Context, dataDir string) error {
@@ -39,6 +41,12 @@ func Start(ctx context.Context, dataDir string) error {
 	}
 	defer apiClient.CloseIdleConnections()
 
-	w := NewWorker(apiClient)
+	docker, err := dockerclient.New(dockerclient.FromEnv)
+	if err != nil {
+		return fmt.Errorf("create Docker client: %w", err)
+	}
+	defer docker.Close()
+
+	w := NewWorker(apiClient, docker)
 	return w.Run(ctx)
 }
