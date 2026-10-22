@@ -58,11 +58,6 @@ func ensureImage(ctx context.Context, docker *client.Client, name string, policy
 }
 
 func runContainer(ctx context.Context, docker *client.Client, c Container) (string, error) {
-	applyContainerDefaults(&c)
-	if err := validateContainer(c); err != nil {
-		return "", err
-	}
-
 	image, err := ensureImage(ctx, docker, c.Image, c.PullPolicy)
 	if err != nil {
 		return "", err
@@ -139,4 +134,31 @@ func containerCreateOptions(c Container, image client.ImageInspectResult) (clien
 	}
 
 	return options, nil
+}
+
+func inspectContainer(ctx context.Context, docker *client.Client, dockerID string) (ContainerStatus, error) {
+	result, err := docker.ContainerInspect(ctx, dockerID, client.ContainerInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		return ContainerStatus{
+			DockerID: dockerID,
+			State:    StateMissing,
+		}, nil
+	}
+	if err != nil {
+		return ContainerStatus{}, fmt.Errorf("inspect container: %w", err)
+	}
+
+	state := result.Container.State
+	status := ContainerStatus{
+		DockerID: result.Container.ID,
+		State:    ContainerState(state.Status),
+		Error:    state.Error,
+	}
+
+	// include the exit code only when the container has exited
+	if status.State == StateExited {
+		status.ExitCode = &state.ExitCode
+	}
+
+	return status, nil
 }

@@ -10,8 +10,7 @@ import (
 	"github.com/distribution/reference"
 )
 
-type Container struct {
-	ID              string            `json:"id" yaml:"id"`
+type ContainerConfig struct {
 	Name            string            `json:"name" yaml:"name"`
 	Image           string            `json:"image" yaml:"image"`
 	PullPolicy      PullPolicy        `json:"pull_policy,omitempty" yaml:"pull_policy,omitempty"`
@@ -22,6 +21,36 @@ type Container struct {
 	Restart         RestartPolicy     `json:"restart,omitempty" yaml:"restart,omitempty"`
 	StopGracePeriod string            `json:"stop_grace_period,omitempty" yaml:"stop_grace_period,omitempty"`
 }
+
+type Container struct {
+	ID string `json:"id"`
+	ContainerConfig
+	Status ContainerStatus `json:"status"`
+}
+
+type ContainerStatus struct {
+	DockerID string         `json:"docker_id,omitempty"`
+	State    ContainerState `json:"state"`
+	ExitCode *int           `json:"exit_code,omitempty"`
+	Error    string         `json:"error,omitempty"`
+}
+
+type ContainerState string
+
+// we use the docker status combined with other states
+
+const (
+	StatePending    ContainerState = "pending"
+	StateFailed     ContainerState = "failed"
+	StateMissing    ContainerState = "missing"
+	StateCreated    ContainerState = "created"
+	StateRunning    ContainerState = "running"
+	StatePaused     ContainerState = "paused"
+	StateRestarting ContainerState = "restarting"
+	StateRemoving   ContainerState = "removing"
+	StateExited     ContainerState = "exited"
+	StateDead       ContainerState = "dead"
+)
 
 type PullPolicy string
 
@@ -39,7 +68,7 @@ const (
 	RestartAlways    RestartPolicy = "always"
 )
 
-func applyContainerDefaults(c *Container) {
+func applyContainerDefaults(c *ContainerConfig) {
 	if c.PullPolicy == "" {
 		c.PullPolicy = PullMissing
 	}
@@ -55,7 +84,7 @@ var containerNamePattern = regexp.MustCompile(
 	`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`,
 )
 
-func validateContainer(c Container) error {
+func validateContainer(c ContainerConfig) error {
 	if c.Name == "" {
 		return fmt.Errorf("name is required")
 	}

@@ -4,10 +4,19 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
+	"github.com/moby/moby/client"
 	"github.com/spf13/cobra"
 )
+
+type daemon struct {
+	ctx        context.Context
+	docker     *client.Client
+	mu         sync.Mutex
+	containers map[string]Container
+}
 
 func newDaemonCommand() *cobra.Command {
 	return &cobra.Command{
@@ -21,7 +30,12 @@ func newDaemonCommand() *cobra.Command {
 			}
 			defer docker.Close()
 
-			server := newHTTPServer()
+			d := &daemon{
+				ctx:        cmd.Context(),
+				docker:     docker,
+				containers: make(map[string]Container),
+			}
+			server := newHTTPServer(d)
 			listener, err := net.Listen("tcp", server.Addr)
 			if err != nil {
 				return fmt.Errorf("listen for HTTP requests: %w", err)

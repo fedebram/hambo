@@ -2,16 +2,11 @@ package main
 
 import "net/http"
 
-func newHTTPServer() *http.Server {
+func newHTTPServer(d *daemon) *http.Server {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("POST /containers", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not implemented", http.StatusNotImplemented)
-	})
-
-	mux.HandleFunc("GET /containers/{id}", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not implemented", http.StatusNotImplemented)
-	})
+	mux.HandleFunc("POST /containers", d.handleRunContainer)
+	mux.HandleFunc("GET /containers/{id}", d.handleGetContainer)
 
 	return &http.Server{
 		Addr:    "127.0.0.1:8080",
