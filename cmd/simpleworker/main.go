@@ -28,6 +28,6 @@ func newRootCommand() *cobra.Command {
 		Use:   "simpleworker",
 		Short: "Manage containers",
 	}
-	root.AddCommand(newDaemonCommand())
+	root.AddCommand(newDaemonCommand(), newRunCommand(), newGetCommand())
 	return root
 }
