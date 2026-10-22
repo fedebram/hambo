@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/containerd/errdefs"
 	dockercontainer "github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
@@ -28,7 +29,63 @@ func newDockerClient(ctx context.Context) (*client.Client, error) {
 	return docker, nil
 }
 
-func containerCreateOptions(c Container, imageEntrypoint []string) (client.ContainerCreateOptions, error) {
+func ensureImage(ctx context.Context, docker *client.Client, name string, policy PullPolicy) (client.ImageInspectResult, error) {
+	switch policy {
+	case PullNever:
+		return docker.ImageInspect(ctx, name)
+	case PullMissing:
+		image, err := docker.ImageInspect(ctx, name)
+		if err == nil {
+			return image, nil
+		}
+		if !errdefs.IsNotFound(err) {
+			return client.ImageInspectResult{}, fmt.Errorf("inspect image: %w", err)
+		}
+	case PullAlways:
+	default:
+		return client.ImageInspectResult{}, fmt.Errorf("unsupported pull policy %q", policy)
+	}
+
+	pull, err := docker.ImagePull(ctx, name, client.ImagePullOptions{})
+	if err != nil {
+		return client.ImageInspectResult{}, fmt.Errorf("pull image: %w", err)
+	}
+	if err := pull.Wait(ctx); err != nil {
+		return client.ImageInspectResult{}, fmt.Errorf("pull image: %w", err)
+	}
+
+	return docker.ImageInspect(ctx, name)
+}
+
+func runContainer(ctx context.Context, docker *client.Client, c Container) (string, error) {
+	applyContainerDefaults(&c)
+	if err := validateContainer(c); err != nil {
+		return "", err
+	}
+
+	image, err := ensureImage(ctx, docker, c.Image, c.PullPolicy)
+	if err != nil {
+		return "", err
+	}
+
+	options, err := containerCreateOptions(c, image)
+	if err != nil {
+		return "", err
+	}
+
+	created, err := docker.ContainerCreate(ctx, options)
+	if err != nil {
+		return "", fmt.Errorf("create container: %w", err)
+	}
+
+	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		return created.ID, fmt.Errorf("start container: %w", err)
+	}
+
+	return created.ID, nil
+}
+
+func containerCreateOptions(c Container, image client.ImageInspectResult) (client.ContainerCreateOptions, error) {
 	gracePeriod, err := time.ParseDuration(c.StopGracePeriod)
 	if err != nil {
 		return client.ContainerCreateOptions{}, fmt.Errorf("parse stop_grace_period: %w", err)
@@ -46,7 +103,8 @@ func containerCreateOptions(c Container, imageEntrypoint []string) (client.Conta
 	options := client.ContainerCreateOptions{
 		Name: c.Name,
 		Config: &dockercontainer.Config{
-			Image:       c.Image,
+			// we need to use the image id and not the image ref.
+			Image:       image.ID,
 			WorkingDir:  c.WorkingDir,
 			Entrypoint:  c.Entrypoint,
 			Cmd:         c.Command,
@@ -72,13 +130,12 @@ func containerCreateOptions(c Container, imageEntrypoint []string) (client.Conta
 	// otherwise docker restores the image command.
 	// see: https://github.com/moby/moby/blob/master/daemon/commit.go#L73-L76
 	if c.Entrypoint == nil && c.Command != nil && len(c.Command) == 0 {
-		if len(imageEntrypoint) == 0 {
+		if image.Config == nil || len(image.Config.Entrypoint) == 0 {
 			return client.ContainerCreateOptions{},
 				fmt.Errorf("command is cleared and the image has no entrypoint")
 		}
 
-		options.Config.Entrypoint = imageEntrypoint
-
+		options.Config.Entrypoint = image.Config.Entrypoint
 	}
 
 	return options, nil
