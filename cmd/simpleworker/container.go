@@ -14,6 +14,7 @@ type Container struct {
 	ID              string            `json:"id" yaml:"id"`
 	Name            string            `json:"name" yaml:"name"`
 	Image           string            `json:"image" yaml:"image"`
+	PullPolicy      PullPolicy        `json:"pull_policy,omitempty" yaml:"pull_policy,omitempty"`
 	Entrypoint      []string          `json:"entrypoint" yaml:"entrypoint"`
 	Command         []string          `json:"command" yaml:"command"`
 	Environment     map[string]string `json:"environment,omitempty" yaml:"environment,omitempty"`
@@ -21,6 +22,14 @@ type Container struct {
 	Restart         RestartPolicy     `json:"restart,omitempty" yaml:"restart,omitempty"`
 	StopGracePeriod string            `json:"stop_grace_period,omitempty" yaml:"stop_grace_period,omitempty"`
 }
+
+type PullPolicy string
+
+const (
+	PullMissing PullPolicy = "missing"
+	PullAlways  PullPolicy = "always"
+	PullNever   PullPolicy = "never"
+)
 
 type RestartPolicy string
 
@@ -31,6 +40,9 @@ const (
 )
 
 func applyContainerDefaults(c *Container) {
+	if c.PullPolicy == "" {
+		c.PullPolicy = PullMissing
+	}
 	if c.Restart == "" {
 		c.Restart = RestartNo
 	}
@@ -60,6 +72,13 @@ func validateContainer(c Container) error {
 	// make sense to use the docker parsing behaviour.
 	if _, err := reference.ParseNormalizedNamed(c.Image); err != nil {
 		return fmt.Errorf("invalid image: %w", err)
+	}
+
+	switch c.PullPolicy {
+	case PullMissing, PullAlways, PullNever:
+		// Supported
+	default:
+		return fmt.Errorf("unsupported pull policy %q", c.PullPolicy)
 	}
 
 	if len(c.Entrypoint) > 0 && c.Entrypoint[0] == "" {
