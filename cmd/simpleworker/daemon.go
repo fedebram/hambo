@@ -7,10 +7,17 @@ func newDaemonCommand() *cobra.Command {
 		Use:   "daemon",
 		Short: "Run the worker daemon",
 		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			docker, err := newDockerClient(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer docker.Close()
+
 			cmd.Println("Worker daemon started")
 			<-cmd.Context().Done()
 			cmd.Println("Worker daemon stopped")
+			return nil
 		},
 	}
 }
