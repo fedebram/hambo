@@ -25,7 +25,8 @@ type ContainerConfig struct {
 type Container struct {
 	ID string `json:"id"`
 	ContainerConfig
-	Status ContainerStatus `json:"status"`
+	DeleteRequested bool            `json:"delete_requested"`
+	Status          ContainerStatus `json:"status"`
 }
 
 type ContainerStatus struct {

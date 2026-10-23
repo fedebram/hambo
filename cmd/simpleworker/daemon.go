@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fedebram/hambo/internal/queue"
 	"github.com/moby/moby/client"
 	"github.com/spf13/cobra"
 )
@@ -14,6 +15,7 @@ import (
 type daemon struct {
 	ctx        context.Context
 	docker     *client.Client
+	queue      queue.Queue
 	mu         sync.Mutex
 	containers map[string]Container
 }
@@ -29,10 +31,12 @@ func newDaemonCommand() *cobra.Command {
 				return err
 			}
 			defer docker.Close()
+			queue := queue.NewMemoryQueue()
 
 			d := &daemon{
 				ctx:        cmd.Context(),
 				docker:     docker,
+				queue:      queue,
 				containers: make(map[string]Container),
 			}
 			server := newHTTPServer(d)
