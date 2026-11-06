@@ -1,7 +1,24 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+	"net"
+)
 
 func main() {
-	fmt.Println("hello hambo")
+	server, client := net.Pipe()
+
+	go func() {
+		defer server.Close()
+		io.Copy(server, server)
+	}()
+
+	client.Write([]byte("hello hambo"))
+
+	buf := make([]byte, 1024)
+	n, _ := client.Read(buf)
+	fmt.Println("echo:", string(buf[:n]))
+
+	client.Close()
 }
