@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+
+	"github.com/fedebram/hambo/muxer"
 )
 
 func main() {
-	server, client := net.Pipe()
+	serverConn, clientConn := net.Pipe()
+
+	server := muxer.NewSession(serverConn)
+	client := muxer.NewSession(clientConn)
 
 	go func() {
 		defer server.Close()
