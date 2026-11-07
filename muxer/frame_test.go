@@ -8,39 +8,47 @@ import (
 	"testing"
 )
 
+type testFrame struct {
+	id      uint32
+	payload []byte
+}
+
 func TestFrameRoundTrip(t *testing.T) {
 	tests := []struct {
-		name     string
-		payloads [][]byte
+		name   string
+		frames []testFrame
 	}{
-		{"single", [][]byte{[]byte("hello")}},
-		{"multiple stay separate", [][]byte{[]byte("hello"), []byte("world")}},
-		{"empty", [][]byte{{}}},
-		{"max size", [][]byte{make([]byte, maxPayload)}},
+		{"single", []testFrame{{1, []byte("hello")}}},
+		{"multiple stay separate", []testFrame{{1, []byte("hello")}, {3, []byte("world")}}},
+		{"empty", []testFrame{{1, []byte{}}}},
+		{"max size", []testFrame{{1, make([]byte, maxPayload)}}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 
-			for _, p := range tt.payloads {
-				if err := writeFrame(&buf, p); err != nil {
+			for _, f := range tt.frames {
+				if err := writeFrame(&buf, f.id, f.payload); err != nil {
 					t.Fatalf("writeFrame: %v", err)
 				}
 			}
 
-			for i, want := range tt.payloads {
-				got, err := readFrame(&buf)
+			for i, want := range tt.frames {
+				id, got, err := readFrame(&buf)
 				if err != nil {
 					t.Fatalf("readFrame %d: %v", i, err)
 				}
-				if !bytes.Equal(got, want) {
-					t.Fatalf("frame %d: got %d bytes, want %d", i, len(got), len(want))
+				if id != want.id {
+					t.Fatalf("frame %d: got id %d, want %d", i, id, want.id)
+				}
+				if !bytes.Equal(got, want.payload) {
+					t.Fatalf("frame %d: got %d bytes, want %d", i, len(got), len(want.payload))
 				}
 			}
 
 			// after the last frame, reading return EOF
-			if _, err := readFrame(&buf); !errors.Is(err, io.EOF) {
+			if _, _, err := readFrame(&buf); !errors.Is(err, io.EOF) {
 				t.Fatalf("after last frame: got %v, want io.EOF", err)
 			}
 		})
@@ -50,7 +58,7 @@ func TestFrameRoundTrip(t *testing.T) {
 func TestWriteFrameTooLarge(t *testing.T) {
 	var buf bytes.Buffer
 
-	err := writeFrame(&buf, make([]byte, maxPayload+1))
+	err := writeFrame(&buf, 1, make([]byte, maxPayload+1))
 	if !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("got %v, want ErrPayloadTooLarge", err)
 	}
@@ -66,14 +74,15 @@ func TestReadFrameErrors(t *testing.T) {
 		want  error
 	}{
 		{"no data", nil, io.EOF},
-		{"cut header", []byte{0, 0}, io.ErrUnexpectedEOF},
-		{"cut payload", append(frameHeader(10), "abc"...), io.ErrUnexpectedEOF},
-		{"too large", frameHeader(maxPayload + 1), ErrPayloadTooLarge},
+		{"cut header in id", []byte{0, 0}, io.ErrUnexpectedEOF},
+		{"cut header in length", []byte{0, 0, 0, 1, 0, 0}, io.ErrUnexpectedEOF},
+		{"cut payload", append(frameHeader(1, 10), "abc"...), io.ErrUnexpectedEOF},
+		{"too large", frameHeader(1, maxPayload+1), ErrPayloadTooLarge},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := readFrame(bytes.NewReader(tt.input))
+			_, _, err := readFrame(bytes.NewReader(tt.input))
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("got %v, want %v", err, tt.want)
 			}
@@ -82,8 +91,9 @@ func TestReadFrameErrors(t *testing.T) {
 }
 
 // frameHeader builds a raw header
-func frameHeader(length uint32) []byte {
+func frameHeader(id, length uint32) []byte {
 	h := make([]byte, headerSize)
-	binary.BigEndian.PutUint32(h, length)
+	binary.BigEndian.PutUint32(h[0:4], id)
+	binary.BigEndian.PutUint32(h[4:8], length)
 	return h
 }

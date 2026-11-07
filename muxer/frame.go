@@ -7,34 +7,38 @@ import (
 )
 
 const (
-	headerSize = 4
+	headerSize = 8         // streamID (4) + length (4)
 	maxPayload = 16 * 1024 // 16 KB
 )
 
 var ErrPayloadTooLarge = errors.New("muxer: payload too large")
 
-func writeFrame(w io.Writer, payload []byte) error {
+// writeFrame writes one frame: | streamID (4) | length (4) | payload |
+func writeFrame(w io.Writer, id uint32, payload []byte) error {
 	if len(payload) > maxPayload {
 		return ErrPayloadTooLarge
 	}
 
 	buf := make([]byte, headerSize+len(payload))
-	binary.BigEndian.PutUint32(buf, uint32(len(payload)))
+	binary.BigEndian.PutUint32(buf[0:4], id)
+	binary.BigEndian.PutUint32(buf[4:8], uint32(len(payload)))
 	copy(buf[headerSize:], payload)
 
 	_, err := w.Write(buf)
 	return err
 }
 
-func readFrame(r io.Reader) ([]byte, error) {
+// readFrame reads one frame and returns its stream ID and payload.
+func readFrame(r io.Reader) (uint32, []byte, error) {
 	header := make([]byte, headerSize)
 	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 
-	length := binary.BigEndian.Uint32(header)
+	id := binary.BigEndian.Uint32(header[0:4])
+	length := binary.BigEndian.Uint32(header[4:8])
 	if length > maxPayload {
-		return nil, ErrPayloadTooLarge
+		return 0, nil, ErrPayloadTooLarge
 	}
 
 	payload := make([]byte, length)
@@ -44,8 +48,8 @@ func readFrame(r io.Reader) ([]byte, error) {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
-		return nil, err
+		return 0, nil, err
 	}
 
-	return payload, nil
+	return id, payload, nil
 }
