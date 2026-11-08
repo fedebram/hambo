@@ -11,8 +11,8 @@ import (
 func main() {
 	serverConn, clientConn := net.Pipe()
 
-	server := muxer.NewSession(serverConn)
-	client := muxer.NewSession(clientConn)
+	server := muxer.Server(serverConn)
+	client := muxer.Client(clientConn)
 	defer client.Close()
 	defer server.Close()
 
@@ -23,22 +23,36 @@ func main() {
 			if err != nil {
 				return
 			}
-			go io.Copy(st, st)
+			go func() {
+				io.Copy(st, st) // echo until the client closes (io.EOF)
+				st.Close()      // then close our side too
+			}()
 		}
 	}()
 
 	// only the client side now open the streams
-	one := client.OpenStream(1)
-	three := client.OpenStream(3)
+	one, err := client.OpenStream() // id 1
+	if err != nil {
+		fmt.Println("open:", err)
+		return
+	}
+	three, err := client.OpenStream() // id 3
+	if err != nil {
+		fmt.Println("open:", err)
+		return
+	}
 
 	one.Write([]byte("hello from stream 1"))
 	three.Write([]byte("hello from stream 3"))
 
-	buf := make([]byte, 1024)
+	// done writing: the server's io.Copy sees io.EOF and closes its side
+	one.Close()
+	three.Close()
 
-	n, _ := one.Read(buf)
-	fmt.Println("stream 1 echo:", string(buf[:n]))
+	// read everything until the server closes (io.ReadAll stops at io.EOF)
+	echo1, err := io.ReadAll(one)
+	fmt.Println("stream 1 echo:", string(echo1), err)
 
-	n, _ = three.Read(buf)
-	fmt.Println("stream 3 echo:", string(buf[:n]))
+	echo3, err := io.ReadAll(three)
+	fmt.Println("stream 3 echo:", string(echo3), err)
 }

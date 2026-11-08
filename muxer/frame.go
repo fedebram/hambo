@@ -7,38 +7,45 @@ import (
 )
 
 const (
-	headerSize = 8         // streamID (4) + length (4)
+	headerSize = 10        // flags (2) + streamID (4) + length (4)
 	maxPayload = 16 * 1024 // 16 KB
+)
+
+const (
+	flagOpen  uint16 = 1 << 0 // the sender opens this stream
+	flagClose uint16 = 1 << 1 // the sender is done with this stream
 )
 
 var ErrPayloadTooLarge = errors.New("muxer: payload too large")
 
-// writeFrame writes one frame: | streamID (4) | length (4) | payload |
-func writeFrame(w io.Writer, id uint32, payload []byte) error {
+// writeFrame writes one frame: | flags (2) | streamID (4) | length (4) | payload |
+func writeFrame(w io.Writer, flags uint16, id uint32, payload []byte) error {
 	if len(payload) > maxPayload {
 		return ErrPayloadTooLarge
 	}
 
 	buf := make([]byte, headerSize+len(payload))
-	binary.BigEndian.PutUint32(buf[0:4], id)
-	binary.BigEndian.PutUint32(buf[4:8], uint32(len(payload)))
+	binary.BigEndian.PutUint16(buf[0:2], flags)
+	binary.BigEndian.PutUint32(buf[2:6], id)
+	binary.BigEndian.PutUint32(buf[6:10], uint32(len(payload)))
 	copy(buf[headerSize:], payload)
 
 	_, err := w.Write(buf)
 	return err
 }
 
-// readFrame reads one frame and returns its stream ID and payload.
-func readFrame(r io.Reader) (uint32, []byte, error) {
+// readFrame reads one frame and returns its flags, stream ID and payload.
+func readFrame(r io.Reader) (uint16, uint32, []byte, error) {
 	header := make([]byte, headerSize)
 	if _, err := io.ReadFull(r, header); err != nil {
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 
-	id := binary.BigEndian.Uint32(header[0:4])
-	length := binary.BigEndian.Uint32(header[4:8])
+	flags := binary.BigEndian.Uint16(header[0:2])
+	id := binary.BigEndian.Uint32(header[2:6])
+	length := binary.BigEndian.Uint32(header[6:10])
 	if length > maxPayload {
-		return 0, nil, ErrPayloadTooLarge
+		return 0, 0, nil, ErrPayloadTooLarge
 	}
 
 	payload := make([]byte, length)
@@ -48,8 +55,8 @@ func readFrame(r io.Reader) (uint32, []byte, error) {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 
-	return id, payload, nil
+	return flags, id, payload, nil
 }
