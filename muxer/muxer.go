@@ -11,9 +11,11 @@ var ErrSessionClosed = errors.New("muxer: session closed")
 
 // Session is a single connection between two peers.
 type Session struct {
-	conn    net.Conn
-	err     error
-	sendCh  chan frame
+	conn   net.Conn
+	err    error
+	sendCh chan frame
+
+	mu      sync.Mutex
 	streams map[uint32]*Stream
 
 	done      chan struct{} // closed when the session ends
@@ -37,6 +39,17 @@ func NewSession(conn net.Conn) *Session {
 	return s
 }
 
+// OpenStream creates stream id on this side only, nothing is sent.
+func (s *Session) OpenStream(id uint32) *Stream {
+	st := newStream(id, s)
+
+	s.mu.Lock()
+	s.streams[id] = st
+	s.mu.Unlock()
+
+	return st
+}
+
 func (s *Session) readLoop() {
 	for {
 		id, payload, err := readFrame(s.conn)
@@ -45,7 +58,9 @@ func (s *Session) readLoop() {
 			return
 		}
 
+		s.mu.Lock()
 		st, ok := s.streams[id]
+		s.mu.Unlock()
 		if !ok {
 			continue
 		}
@@ -92,16 +107,6 @@ func (s *Session) isClosed() bool {
 	default:
 		return false
 	}
-}
-
-// Read reads from the underlying connection.
-func (s *Session) Read(p []byte) (int, error) {
-	return s.conn.Read(p)
-}
-
-// Write writes to the underlying connection.
-func (s *Session) Write(p []byte) (int, error) {
-	return s.conn.Write(p)
 }
 
 // Close ends the session and closes the underlying connection.

@@ -13,17 +13,26 @@ func main() {
 
 	server := muxer.NewSession(serverConn)
 	client := muxer.NewSession(clientConn)
+	defer client.Close()
+	defer server.Close()
 
-	go func() {
-		defer server.Close()
-		io.Copy(server, server)
-	}()
+	// we open the same stream on both side
 
-	client.Write([]byte("hello hambo"))
+	for _, id := range []uint32{1, 3} {
+		sst := server.OpenStream(id)
+		go io.Copy(sst, sst)
+	}
+	one := client.OpenStream(1)
+	three := client.OpenStream(3)
+
+	one.Write([]byte("hello from stream 1"))
+	three.Write([]byte("hello from stream 3"))
 
 	buf := make([]byte, 1024)
-	n, _ := client.Read(buf)
-	fmt.Println("echo:", string(buf[:n]))
 
-	client.Close()
+	n, _ := one.Read(buf)
+	fmt.Println("stream 1 echo:", string(buf[:n]))
+
+	n, _ = three.Read(buf)
+	fmt.Println("stream 3 echo:", string(buf[:n]))
 }
