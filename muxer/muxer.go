@@ -62,9 +62,14 @@ func (s *Session) readLoop() {
 }
 
 func (s *Session) writeLoop() {
-	for f := range s.sendCh {
-		if err := writeFrame(s.conn, f.id, f.payload); err != nil {
-			s.closeWithErr(err)
+	for {
+		select {
+		case f := <-s.sendCh:
+			if err := writeFrame(s.conn, f.id, f.payload); err != nil {
+				s.closeWithErr(err)
+				return
+			}
+		case <-s.done:
 			return
 		}
 	}

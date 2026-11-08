@@ -2,6 +2,7 @@ package muxer
 
 import (
 	"bytes"
+	"io"
 	"sync"
 )
 
@@ -51,4 +52,28 @@ func (st *Stream) Read(p []byte) (int, error) {
 	}
 }
 
-func (st *Stream) Write(p []byte) (int, error)
+// Write sends p on this stream, split into frames of at most maxPayload bytes.
+func (st *Stream) Write(p []byte) (int, error) {
+	n := 0
+	for len(p) > 0 {
+		chunk := p[:min(len(p), maxPayload)]
+
+		// the user might reuse the bytes. we need to clone
+		f := frame{id: st.id, payload: bytes.Clone(chunk)}
+
+		select {
+		case st.session.sendCh <- f:
+		case <-st.session.done:
+			err := st.session.err
+			if err == io.EOF {
+				// EOF comes from the read loop and means that the session closed
+				err = ErrSessionClosed
+			}
+			return n, err
+		}
+
+		n += len(chunk)
+		p = p[len(chunk):]
+	}
+	return n, nil
+}
