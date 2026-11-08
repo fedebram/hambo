@@ -3,11 +3,14 @@ package muxer
 
 import (
 	"errors"
+	"io"
 	"net"
 	"sync"
 )
 
 var ErrSessionClosed = errors.New("muxer: session closed")
+
+const acceptBacklog = 64
 
 // Session is a single connection between two peers.
 type Session struct {
@@ -17,6 +20,8 @@ type Session struct {
 
 	mu      sync.Mutex
 	streams map[uint32]*Stream
+
+	acceptCh chan *Stream
 
 	done      chan struct{} // closed when the session ends
 	closeOnce sync.Once
@@ -29,10 +34,11 @@ type frame struct {
 
 func NewSession(conn net.Conn) *Session {
 	s := &Session{
-		conn:    conn,
-		sendCh:  make(chan frame),
-		streams: make(map[uint32]*Stream),
-		done:    make(chan struct{}),
+		conn:     conn,
+		sendCh:   make(chan frame),
+		streams:  make(map[uint32]*Stream),
+		acceptCh: make(chan *Stream, acceptBacklog),
+		done:     make(chan struct{}),
 	}
 	go s.readLoop()
 	go s.writeLoop()
@@ -50,6 +56,20 @@ func (s *Session) OpenStream(id uint32) *Stream {
 	return st
 }
 
+// Accept waits for the peer to open a new stream and returns it.
+func (s *Session) Accept() (*Stream, error) {
+	select {
+	case st := <-s.acceptCh:
+		return st, nil
+	case <-s.done:
+		err := s.err
+		if err == io.EOF {
+			err = ErrSessionClosed
+		}
+		return nil, err
+	}
+}
+
 func (s *Session) readLoop() {
 	for {
 		id, payload, err := readFrame(s.conn)
@@ -60,9 +80,18 @@ func (s *Session) readLoop() {
 
 		s.mu.Lock()
 		st, ok := s.streams[id]
-		s.mu.Unlock()
 		if !ok {
-			continue
+			st = newStream(id, s)
+			s.streams[id] = st
+		}
+		s.mu.Unlock()
+
+		if !ok {
+			select {
+			case s.acceptCh <- st:
+			case <-s.done:
+				return
+			}
 		}
 
 		st.mu.Lock()

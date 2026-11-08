@@ -16,12 +16,18 @@ func main() {
 	defer client.Close()
 	defer server.Close()
 
-	// we open the same stream on both side
+	// now the server can accept any new stream and echoes back
+	go func() {
+		for {
+			st, err := server.Accept()
+			if err != nil {
+				return
+			}
+			go io.Copy(st, st)
+		}
+	}()
 
-	for _, id := range []uint32{1, 3} {
-		sst := server.OpenStream(id)
-		go io.Copy(sst, sst)
-	}
+	// only the client side now open the streams
 	one := client.OpenStream(1)
 	three := client.OpenStream(3)
 
