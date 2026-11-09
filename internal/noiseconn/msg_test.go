@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	"github.com/flynn/noise"
 )
 
 func TestMsgRoundTrip(t *testing.T) {
@@ -27,7 +29,7 @@ func TestMsgRoundTrip(t *testing.T) {
 func TestMsgTooLarge(t *testing.T) {
 	var buf bytes.Buffer
 
-	err := writeMsg(&buf, make([]byte, maxMsgLen+1))
+	err := writeMsg(&buf, make([]byte, noise.MaxMsgLen+1))
 	if !errors.Is(err, errMsgTooLarge) {
 		t.Fatalf("got %v, want errMsgTooLarge", err)
 	}

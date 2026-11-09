@@ -4,16 +4,22 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+
+	"github.com/flynn/noise"
 )
 
-// maxMsgLen is the largest Noise message allowed by the spec.
-const maxMsgLen = 65535
+// tagLen is the size of the authentication tag added by Encrypt.
+// It is 16 for every cipher Noise allows (ChaChaPoly, AESGCM).
+const tagLen = 16
+
+// maxPlain is the most data that fits in one Noise message, tag included.
+const maxPlain = noise.MaxMsgLen - tagLen
 
 var errMsgTooLarge = errors.New("noiseconn: message too large")
 
 // writeMsg writes one Noise message: | length (2) | message |
 func writeMsg(w io.Writer, msg []byte) error {
-	if len(msg) > maxMsgLen {
+	if len(msg) > noise.MaxMsgLen {
 		return errMsgTooLarge
 	}
 
