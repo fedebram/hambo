@@ -16,12 +16,12 @@ const (
 	flagClose uint16 = 1 << 1 // the sender is done with this stream
 )
 
-var ErrPayloadTooLarge = errors.New("muxer: payload too large")
+var errPayloadTooLarge = errors.New("muxer: payload too large")
 
 // writeFrame writes one frame: | flags (2) | streamID (4) | length (4) | payload |
 func writeFrame(w io.Writer, flags uint16, id uint32, payload []byte) error {
 	if len(payload) > maxPayload {
-		return ErrPayloadTooLarge
+		return errPayloadTooLarge
 	}
 
 	buf := make([]byte, headerSize+len(payload))
@@ -45,7 +45,7 @@ func readFrame(r io.Reader) (uint16, uint32, []byte, error) {
 	id := binary.BigEndian.Uint32(header[2:6])
 	length := binary.BigEndian.Uint32(header[6:10])
 	if length > maxPayload {
-		return 0, 0, nil, ErrPayloadTooLarge
+		return 0, 0, nil, errPayloadTooLarge
 	}
 
 	payload := make([]byte, length)

@@ -59,6 +59,9 @@ func newSession(conn net.Conn, firstID uint32) *Session {
 // OpenStream creates a new stream with the next free id
 // and tells the peer with an open frame.
 func (s *Session) OpenStream() (*Stream, error) {
+	if s.isClosed() {
+		return nil, ErrSessionClosed
+	}
 	s.mu.Lock()
 	id := s.nextID
 	s.nextID += 2
@@ -67,6 +70,7 @@ func (s *Session) OpenStream() (*Stream, error) {
 	s.mu.Unlock()
 
 	if err := s.send(frame{flags: flagOpen, id: id}); err != nil {
+		s.removeStream(id)
 		return nil, err
 	}
 	return st, nil
