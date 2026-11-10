@@ -44,7 +44,7 @@ func (s *Stream) Recv(v any) error {
 	return nil
 }
 
-// Close tells the other side we are done sending.
+// CloseSend tells the other side we are done sending.
 func (s *Stream) CloseSend() error {
 	return s.st.Close()
 }
@@ -52,4 +52,18 @@ func (s *Stream) CloseSend() error {
 // sendError sends an error message.
 func (s *Stream) sendError(msg string) error {
 	return s.enc.Encode(envelope{Error: msg})
+}
+
+// Method returns the method this stream was opened for.
+func (s *Stream) Method() string {
+	return s.st.Label()
+}
+
+// NewStream opens a new stream on sess for method.
+func NewStream(sess *muxer.Session, method string) (*Stream, error) {
+	st, err := sess.OpenStream(method)
+	if err != nil {
+		return nil, err
+	}
+	return newStream(st), nil
 }
