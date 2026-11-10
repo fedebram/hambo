@@ -60,12 +60,12 @@ func main() {
 	client := muxer.Client(conn)
 	defer client.Close()
 
-	one, err := client.OpenStream()
+	one, err := client.OpenStream("")
 	if err != nil {
 		fmt.Println("open:", err)
 		return
 	}
-	three, err := client.OpenStream()
+	three, err := client.OpenStream("")
 	if err != nil {
 		fmt.Println("open:", err)
 		return

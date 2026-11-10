@@ -12,6 +12,7 @@ var ErrStreamClosed = errors.New("muxer: stream closed")
 type Stream struct {
 	id      uint32
 	session *Session
+	label   string
 
 	mu           sync.Mutex
 	buf          bytes.Buffer
@@ -20,12 +21,18 @@ type Stream struct {
 	notify       chan struct{}
 }
 
-func newStream(id uint32, s *Session) *Stream {
+func newStream(id uint32, s *Session, label string) *Stream {
 	return &Stream{
 		id:      id,
 		session: s,
+		label:   label,
 		notify:  make(chan struct{}, 1),
 	}
+}
+
+// Label returns the label the opener attached to this stream.
+func (st *Stream) Label() string {
+	return st.label
 }
 
 // Read reads data received on this stream. It waits if none is available.

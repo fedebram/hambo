@@ -7,7 +7,10 @@ import (
 	"sync"
 )
 
-var ErrSessionClosed = errors.New("muxer: session closed")
+var (
+	ErrSessionClosed = errors.New("muxer: session closed")
+	ErrLabelTooLarge = errors.New("muxer: label too large")
+)
 
 const acceptBacklog = 64
 
@@ -58,18 +61,21 @@ func newSession(conn net.Conn, firstID uint32) *Session {
 
 // OpenStream creates a new stream with the next free id
 // and tells the peer with an open frame.
-func (s *Session) OpenStream() (*Stream, error) {
+func (s *Session) OpenStream(label string) (*Stream, error) {
+	if len(label) > maxPayload {
+		return nil, ErrLabelTooLarge // it must fit in one frame
+	}
 	if s.isClosed() {
 		return nil, ErrSessionClosed
 	}
 	s.mu.Lock()
 	id := s.nextID
 	s.nextID += 2
-	st := newStream(id, s)
+	st := newStream(id, s, label)
 	s.streams[id] = st
 	s.mu.Unlock()
 
-	if err := s.send(frame{flags: flagOpen, id: id}); err != nil {
+	if err := s.send(frame{flags: flagOpen, id: id, payload: []byte(label)}); err != nil {
 		s.removeStream(id)
 		return nil, err
 	}
@@ -104,7 +110,8 @@ func (s *Session) readLoop() {
 		st, ok := s.streams[id]
 		isNew := !ok && flags&flagOpen != 0
 		if isNew {
-			st = newStream(id, s)
+			// the payload of an open frame is the label
+			st = newStream(id, s, string(payload))
 			s.streams[id] = st
 		}
 		s.mu.Unlock()
@@ -113,7 +120,10 @@ func (s *Session) readLoop() {
 			continue // unknown id without open: drop it
 		}
 
+		data := payload
 		if isNew {
+			data = nil // it was the label, we don't pass that to stream Read
+
 			select {
 			case s.acceptCh <- st:
 			case <-s.done:
@@ -121,7 +131,7 @@ func (s *Session) readLoop() {
 			}
 		}
 
-		if st.receive(payload, flags&flagClose != 0) {
+		if st.receive(data, flags&flagClose != 0) {
 			s.removeStream(id) // both sides closed: forget it
 		}
 	}

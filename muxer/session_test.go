@@ -1,8 +1,10 @@
 package muxer
 
 import (
+	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -29,7 +31,7 @@ func TestStreamRoundTrip(t *testing.T) {
 		got <- string(data)
 	}()
 
-	st, err := client.OpenStream()
+	st, err := client.OpenStream("")
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
 	}
@@ -61,6 +63,66 @@ func TestStreams(t *testing.T) {
 	sendAndCheck(t, server, "from server")
 }
 
+func TestStreamLabel(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	client := Client(clientConn)
+	server := Server(serverConn)
+	defer client.Close()
+	defer server.Close()
+
+	type accepted struct {
+		label string
+		data  string
+		err   error
+	}
+	got := make(chan accepted, 1)
+	go func() {
+		st, err := server.Accept()
+		if err != nil {
+			got <- accepted{err: err}
+			return
+		}
+		data, err := io.ReadAll(st)
+		got <- accepted{st.Label(), string(data), err}
+	}()
+
+	st, err := client.OpenStream("nodes.list")
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	// the opener sees its own label
+	if st.Label() != "nodes.list" {
+		t.Fatalf("opener label: got %q", st.Label())
+	}
+	st.Write([]byte("hello"))
+	st.Close()
+
+	a := <-got
+	if a.err != nil {
+		t.Fatalf("server: %v", a.err)
+	}
+	if a.label != "nodes.list" {
+		t.Fatalf("server label: got %q, want %q", a.label, "nodes.list")
+	}
+	// the label must not show up as data
+	if a.data != "hello" {
+		t.Fatalf("server data: got %q, want %q", a.data, "hello")
+	}
+}
+
+func TestStreamLabelTooLarge(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	client := Client(clientConn)
+	server := Server(serverConn)
+	defer client.Close()
+	defer server.Close()
+
+	_, err := client.OpenStream(strings.Repeat("x", maxPayload+1))
+	if !errors.Is(err, ErrLabelTooLarge) {
+		t.Fatalf("got %v, want ErrLabelTooLarge", err)
+	}
+}
+
 // echo accepts one stream and sends back whatever it receives.
 func echo(s *Session) {
 	st, err := s.Accept()
@@ -74,7 +136,7 @@ func echo(s *Session) {
 func sendAndCheck(t *testing.T, s *Session, msg string) {
 	t.Helper()
 
-	st, err := s.OpenStream()
+	st, err := s.OpenStream("")
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
 	}
