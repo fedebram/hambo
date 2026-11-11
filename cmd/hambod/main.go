@@ -9,10 +9,10 @@ import (
 func main() {
 	root := &cobra.Command{
 		Use:          "hambod",
-		Short:        "hambod runs a hambo server",
+		Short:        "hambod is the hambo daemon: it runs a server or a worker",
 		SilenceUsage: true,
 	}
-	root.AddCommand(initCmd(), serverCmd())
+	root.AddCommand(initCmd(), serverCmd(), joinCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
