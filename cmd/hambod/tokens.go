@@ -74,6 +74,33 @@ func (ts *tokenStore) create() (id, secret []byte, err error) {
 	return id, secret, nil
 }
 
+// lookup returns the secret of the token with this id, or nil if there is none.
+func (ts *tokenStore) lookup(id []byte) []byte {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	return ts.tokens[string(id)] // nil if not found
+}
+
+// consume deletes the token with this id. It reports false if the token
+// was already gone.
+func (ts *tokenStore) consume(id []byte) (bool, error) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	secret, ok := ts.tokens[string(id)]
+	if !ok {
+		return false, nil
+	}
+
+	delete(ts.tokens, string(id))
+	if err := ts.save(); err != nil {
+		ts.tokens[string(id)] = secret
+		return false, err
+	}
+	return true, nil
+}
+
 // save writes all tokens to the file. The caller must hold ts.mu.
 func (ts *tokenStore) save() error {
 	var f tokensFile

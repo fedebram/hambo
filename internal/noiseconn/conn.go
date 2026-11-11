@@ -59,7 +59,17 @@ func (c *Conn) Read(p []byte) (int, error) {
 
 // Client runs the handshake as the client and returns an encrypted conn.
 func Client(conn net.Conn, local noise.DHKey, serverPub []byte) (*Conn, error) {
-	send, recv, err := clientHandshake(conn, local, serverPub)
+	send, recv, err := clientHandshake(conn, local, serverPub, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &Conn{Conn: conn, send: send, recv: recv}, nil
+}
+
+// Join runs the handshake as a new client with a join token,
+// and returns an encrypted conn.
+func Join(conn net.Conn, local noise.DHKey, serverPub, tokenID, secret []byte) (*Conn, error) {
+	send, recv, err := clientHandshake(conn, local, serverPub, tokenID, secret)
 	if err != nil {
 		return nil, err
 	}
@@ -67,11 +77,12 @@ func Client(conn net.Conn, local noise.DHKey, serverPub []byte) (*Conn, error) {
 }
 
 // Server runs the handshake as the server and returns an encrypted conn
-// and the client's public key.
-func Server(conn net.Conn, local noise.DHKey, allowed func(pub []byte) bool) (*Conn, []byte, error) {
-	send, recv, peer, err := serverHandshake(conn, local, allowed)
+// and what it learned about the client (Peer). allowed checks known clients.
+// joinSecret returns a join token's secret, or nil if there's no such token.
+func Server(conn net.Conn, local noise.DHKey, allowed func(pub []byte) bool, joinSecret func(id []byte) []byte) (*Conn, Peer, error) {
+	send, recv, peer, err := serverHandshake(conn, local, allowed, joinSecret)
 	if err != nil {
-		return nil, nil, err
+		return nil, Peer{}, err
 	}
 	return &Conn{Conn: conn, send: send, recv: recv}, peer, nil
 }

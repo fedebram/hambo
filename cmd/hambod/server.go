@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,7 +41,7 @@ func runServer(dataDir, listen string) error {
 	}
 	fmt.Println("server public key:", base64.StdEncoding.EncodeToString(key.Public))
 
-	allowed, err := loadAllowlist(dataDir)
+	clients, err := loadClients(dataDir)
 	if err != nil {
 		return err
 	}
@@ -75,22 +76,58 @@ func runServer(dataDir, listen string) error {
 		if err != nil {
 			return err
 		}
-		go serveConn(conn, key, allowed, r)
+		go serveConn(conn, key, clients, tokens, r)
 	}
 }
 
-func serveConn(conn net.Conn, key noise.DHKey, allowed func([]byte) bool, r *rpc.Router) {
-	nc, _, err := noiseconn.Server(conn, key, allowed)
+// serveConn secures one connection and serves rpc on it until it ends.
+// If the client joined with a token, it is registered first.
+func serveConn(conn net.Conn, key noise.DHKey, clients *clientStore, tokens *tokenStore, r *rpc.Router) {
+	nc, peer, err := noiseconn.Server(conn, key, clients.allowed, tokens.lookup)
 	if err != nil {
 		fmt.Println("handshake failed:", conn.RemoteAddr(), err)
 		conn.Close()
 		return
 	}
 
+	// a new worker joined with a token: register it before serving
+	if peer.TokenID != nil {
+		if err := registerWorker(clients, tokens, peer); err != nil {
+			fmt.Println("join failed:", conn.RemoteAddr(), err)
+			nc.Close()
+			return
+		}
+	}
+
 	sess := muxer.Server(nc)
 	defer sess.Close()
 
 	r.Serve(sess)
+}
+
+// registerWorker uses up the token a worker joined with,
+// then adds the worker's key to the allowlist.
+func registerWorker(clients *clientStore, tokens *tokenStore, peer noiseconn.Peer) error {
+	ok, err := tokens.consume(peer.TokenID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("token already used")
+	}
+
+	name := workerName(peer.Public)
+	if err := clients.add(name, peer.Public); err != nil {
+		return err
+	}
+	fmt.Println("worker joined:", name)
+	return nil
+}
+
+// workerName gives a worker a short readable name from its public key,
+// like worker-3f9a2c1d.
+func workerName(pub []byte) string {
+	return "worker-" + hex.EncodeToString(pub[:4])
 }
 
 func loadServerKey(dataDir string) (noise.DHKey, error) {
@@ -108,29 +145,4 @@ func loadServerKey(dataDir string) (noise.DHKey, error) {
 		return noise.DHKey{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return noise.DHKey{Private: kf.Private, Public: kf.Public}, nil
-}
-
-func loadAllowlist(dataDir string) (func(pub []byte) bool, error) {
-	path := filepath.Join(dataDir, "clients.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var list allowlist
-	if err := json.Unmarshal(data, &list); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-
-	// public key → name, for a fast lookup
-	keys := make(map[string]string)
-	for _, c := range list.Clients {
-		keys[string(c.Public)] = c.Name
-	}
-
-	allowed := func(pub []byte) bool {
-		_, ok := keys[string(pub)]
-		return ok
-	}
-	return allowed, nil
 }

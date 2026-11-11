@@ -49,6 +49,7 @@ func connPair(t *testing.T) (*Conn, *Conn) {
 		serverConn.Close()
 	})
 	allowAll := func([]byte) bool { return true }
+	noTokens := func([]byte) []byte { return nil }
 
 	type server struct {
 		conn *Conn
@@ -56,7 +57,7 @@ func connPair(t *testing.T) (*Conn, *Conn) {
 	}
 	done := make(chan server, 1)
 	go func() {
-		c, _, err := Server(serverConn, serverKey, allowAll)
+		c, _, err := Server(serverConn, serverKey, allowAll, noTokens)
 		done <- server{c, err}
 	}()
 

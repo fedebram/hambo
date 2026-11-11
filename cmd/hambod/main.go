@@ -12,7 +12,7 @@ func main() {
 		Short:        "hambod is the hambo daemon: it runs a server or a worker",
 		SilenceUsage: true,
 	}
-	root.AddCommand(initCmd(), serverCmd(), joinCmd())
+	root.AddCommand(initCmd(), serverCmd(), joinCmd(), workerCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
