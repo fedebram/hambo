@@ -8,12 +8,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func pingCmd(configPath *string) *cobra.Command {
+func pingCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ping",
 		Short: "Check the connection to the server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPing(*configPath)
+			return runPing(configPath)
 		},
 	}
 }

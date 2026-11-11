@@ -14,8 +14,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var configPath string
+
 func main() {
-	var configPath string
 
 	root := &cobra.Command{
 		Use:          "hambo",
@@ -24,7 +25,7 @@ func main() {
 	}
 	root.PersistentFlags().StringVar(&configPath, "config", "./data/admin.json", "the credentials file")
 
-	root.AddCommand(pingCmd(&configPath))
+	root.AddCommand(pingCmd(), tokenCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

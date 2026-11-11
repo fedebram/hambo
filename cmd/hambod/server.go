@@ -45,10 +45,22 @@ func runServer(dataDir, listen string) error {
 		return err
 	}
 
+	tokens, err := loadTokens(dataDir)
+	if err != nil {
+		return err
+	}
+
 	// the methods clients can call
 	r := rpc.NewRouter()
 	r.Handle("ping", func(s *rpc.Stream) error {
 		return s.Send("pong")
+	})
+	r.Handle("tokens.create", func(s *rpc.Stream) error {
+		id, secret, err := tokens.create()
+		if err != nil {
+			return err
+		}
+		return s.Send(joinToken(key.Public, id, secret))
 	})
 
 	ln, err := net.Listen("tcp", listen)
