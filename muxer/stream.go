@@ -33,8 +33,8 @@ type Stream struct {
 	closed       bool
 	notify       chan struct{}
 
-	sendWindow uint32        // bytes we may still send before the peer grants more
-	recvWindow uint32        // bytes the peer may still send us
+	sendWindow uint32 // bytes we may still send before the peer grants more
+	recvWindow uint32 // bytes the peer may still send us
 	sendNotify chan struct{}
 }
 

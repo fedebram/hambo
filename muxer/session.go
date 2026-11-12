@@ -6,14 +6,28 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 var (
 	ErrSessionClosed = errors.New("muxer: session closed")
 	ErrGoAway        = errors.New("muxer: peer accepts no new streams")
+
+	errKeepaliveTimeout = errors.New("keepalive timeout: nothing received from the peer")
 )
 
 const acceptBacklog = 64 // streams the peer opened, waiting for Accept
+
+// Config holds the session settings. A zero field means its default,
+// so Config{} gives all the defaults.
+type Config struct {
+	// KeepaliveInterval is how often we ping the peer. Default 10s.
+	KeepaliveInterval time.Duration
+	// KeepaliveTimeout closes the session when nothing at all has been
+	// received from the peer for this long. Default 30s.
+	KeepaliveTimeout time.Duration
+}
 
 type Session struct {
 	conn   io.ReadWriteCloser
@@ -27,6 +41,10 @@ type Session struct {
 	remoteGoAway bool // the peer sent go away: OpenStream fails
 
 	acceptCh chan *Stream
+
+	cfg         Config
+	lastRecv    atomic.Int64 // when we last received a frame (unix nanoseconds)
+	pongPending atomic.Bool  // a pong is already on its way: don't start another
 
 	done      chan struct{}
 	err       error
@@ -42,16 +60,22 @@ type writeRequest struct {
 }
 
 // Client starts a session on the client side. It opens streams with odd ids.
-func Client(conn io.ReadWriteCloser) *Session {
-	return newSession(conn, 1)
+func Client(conn io.ReadWriteCloser, cfg Config) *Session {
+	return newSession(conn, 1, cfg)
 }
 
 // Server starts a session on the server side. It opens streams with even ids.
-func Server(conn io.ReadWriteCloser) *Session {
-	return newSession(conn, 2)
+func Server(conn io.ReadWriteCloser, cfg Config) *Session {
+	return newSession(conn, 2, cfg)
 }
 
-func newSession(conn io.ReadWriteCloser, firstID uint32) *Session {
+func newSession(conn io.ReadWriteCloser, firstID uint32, cfg Config) *Session {
+	if cfg.KeepaliveInterval == 0 {
+		cfg.KeepaliveInterval = 10 * time.Second
+	}
+	if cfg.KeepaliveTimeout == 0 {
+		cfg.KeepaliveTimeout = 30 * time.Second
+	}
 	s := &Session{
 		conn:     conn,
 		streams:  make(map[uint32]*Stream),
@@ -60,9 +84,13 @@ func newSession(conn io.ReadWriteCloser, firstID uint32) *Session {
 		sendCh:   make(chan writeRequest),
 		ctrlCh:   make(chan writeRequest),
 		done:     make(chan struct{}),
+
+		cfg: cfg,
 	}
+	s.lastRecv.Store(time.Now().UnixNano())
 	go s.readLoop()
 	go s.writeLoop()
+	go s.keepaliveLoop()
 	return s
 }
 
@@ -193,6 +221,15 @@ func (s *Session) readLoop() {
 			s.closeWithErr(err)
 			return
 		}
+		s.lastRecv.Store(time.Now().UnixNano()) // any frame shows the peer is alive
+
+		if flags&flagPing != 0 {
+			s.sendPong()
+			continue
+		}
+		if flags&flagPong != 0 {
+			continue // nothing more to do: lastRecv is already updated
+		}
 
 		if flags&flagGoAway != 0 {
 			s.mu.Lock()
@@ -267,6 +304,43 @@ func (s *Session) newRemoteStream(id uint32) *Stream {
 		go s.sendCtrl(flagReset, id, nil)
 		return nil
 	}
+}
+
+// keepaliveLoop pings the peer regularly and closes the session
+// when nothing has arrived for too long.
+func (s *Session) keepaliveLoop() {
+	ticker := time.NewTicker(s.cfg.KeepaliveInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+		case <-s.done:
+			return
+		}
+
+		last := time.Unix(0, s.lastRecv.Load())
+		if time.Since(last) > s.cfg.KeepaliveTimeout {
+			s.closeWithErr(errKeepaliveTimeout)
+			return
+		}
+		// not s.sendCtrl directly: if the peer is gone the write can get
+		// stuck, and this loop must keep running to notice the timeout
+		go s.sendCtrl(flagPing, 0, nil)
+	}
+}
+
+// sendPong answers a ping without making readLoop wait.
+// Only one pong is on its way at a time, so a peer flooding us with pings
+// cannot make us start a goroutine for each one.
+func (s *Session) sendPong() {
+	if !s.pongPending.CompareAndSwap(false, true) {
+		return // a pong is already on its way: that answers this ping too
+	}
+	go func() {
+		s.sendCtrl(flagPong, 0, nil)
+		s.pongPending.Store(false)
+	}()
 }
 
 func (s *Session) removeStream(id uint32) {

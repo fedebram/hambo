@@ -5,13 +5,15 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestStreamRoundTrip(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	client := Client(clientConn)
-	server := Server(serverConn)
+	client := Client(clientConn, Config{})
+	server := Server(serverConn, Config{})
 	defer client.Close()
 	defer server.Close()
 
@@ -49,8 +51,8 @@ func TestStreamRoundTrip(t *testing.T) {
 
 func TestStreams(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	client := Client(clientConn)
-	server := Server(serverConn)
+	client := Client(clientConn, Config{})
+	server := Server(serverConn, Config{})
 	defer client.Close()
 	defer server.Close()
 
@@ -96,8 +98,8 @@ func sendAndCheck(t *testing.T, s *Session, msg string) {
 // newPair returns a client and a server session connected to each othervia a net pipe.
 func newPair(t *testing.T) (*Session, *Session) {
 	clientConn, serverConn := net.Pipe()
-	client := Client(clientConn)
-	server := Server(serverConn)
+	client := Client(clientConn, Config{})
+	server := Server(serverConn, Config{})
 	t.Cleanup(func() {
 		client.Close()
 		server.Close()
@@ -275,5 +277,47 @@ func TestGoAwayRefusesNewStreams(t *testing.T) {
 	// Read waits until the reset arrives
 	if _, err := st.Read(make([]byte, 1)); !errors.Is(err, ErrStreamReset) {
 		t.Fatalf("Read: got %v, want ErrStreamReset", err)
+	}
+}
+
+// ping every 10ms, close after 50ms with nothing received
+var fastKeepalive = Config{
+	KeepaliveInterval: 10 * time.Millisecond,
+	KeepaliveTimeout:  50 * time.Millisecond,
+}
+
+// A quiet peer that is alive must not be closed.
+func TestKeepaliveIdlePeerStaysConnected(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	client := Client(clientConn, fastKeepalive)
+	server := Server(serverConn, fastKeepalive)
+	defer client.Close()
+	defer server.Close()
+
+	// send nothing for 500ms, much longer than the 50ms limit
+	time.Sleep(500 * time.Millisecond)
+
+	// only pings and pongs went back and forth, and that is enough
+	if client.isClosed() {
+		t.Fatalf("client closed: %v", client.err)
+	}
+	if server.isClosed() {
+		t.Fatalf("server closed: %v", server.err)
+	}
+}
+
+// A peer that is gone must be detected.
+func TestKeepaliveDeadPeer(t *testing.T) {
+	// the other end of the pipe is never used: like a peer that lost power
+	clientConn, deadConn := net.Pipe()
+	defer deadConn.Close()
+
+	client := Client(clientConn, fastKeepalive)
+	defer client.Close()
+
+	// Accept returns only when the session closes
+	_, err := client.Accept()
+	if !strings.Contains(err.Error(), "keepalive timeout") {
+		t.Fatalf("got %v, want a keepalive timeout", err)
 	}
 }
