@@ -2,17 +2,22 @@ package rpc
 
 import (
 	"sync"
+	"time"
 
-	"github.com/fedebram/hambo/muxer"
+	"github.com/fedebram/hambo/internal/muxer"
 )
 
-// Handler serves one stream opened for its method.
-// If it returns an error, the error is sent to the other side.
+// methodTimeout is how long we wait for the method name after a stream opens.
+const methodTimeout = 10 * time.Second
+
+// Handler serves one stream that the other side opened for its method.
+// If it returns an error, the other side's next Recv returns that error.
 type Handler func(s *Stream) error
 
-// Router sends each incoming stream to the handler of its method.
+// Router runs the right handler for each stream the other side opens,
+// picked by the method name the stream starts with.
 type Router struct {
-	mu       sync.RWMutex
+	mu       sync.Mutex
 	handlers map[string]Handler
 }
 
@@ -37,25 +42,34 @@ func (r *Router) Handle(method string, h Handler) {
 // until the session ends.
 func (r *Router) Serve(sess *muxer.Session) error {
 	for {
-		st, err := sess.Accept()
+		raw, err := sess.Accept()
 		if err != nil {
 			return err
 		}
-		go r.serveStream(st)
+		go r.serveStream(raw)
 	}
 }
 
 // serveStream finds the handler of the stream's method and runs it.
-func (r *Router) serveStream(st *muxer.Stream) {
-	s := newStream(st)
-	defer s.CloseSend()
+func (r *Router) serveStream(raw *muxer.Stream) {
+	s := newStream(raw)
+	defer s.Close() // the call is over
 
-	r.mu.RLock()
-	h, ok := r.handlers[s.Method()]
-	r.mu.RUnlock()
+	// the first message is the method name; give up if it doesn't come
+	timer := time.AfterFunc(methodTimeout, func() { raw.Close() })
+	var method string
+	err := s.dec.Decode(&method)
+	timer.Stop()
+	if err != nil {
+		return
+	}
+
+	r.mu.Lock()
+	h, ok := r.handlers[method]
+	r.mu.Unlock()
 
 	if !ok {
-		s.sendError("unknown method: " + s.Method())
+		s.sendError("unknown method: " + method)
 		return
 	}
 	if err := h(s); err != nil {

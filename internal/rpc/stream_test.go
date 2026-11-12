@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/fedebram/hambo/muxer"
+	"github.com/fedebram/hambo/internal/muxer"
 )
 
 // streamPair returns the two ends of one stream, over a muxer session.
@@ -13,14 +13,14 @@ func streamPair(t *testing.T) (*Stream, *Stream) {
 	t.Helper()
 
 	clientConn, serverConn := net.Pipe()
-	client := muxer.Client(clientConn)
-	server := muxer.Server(serverConn)
+	client := muxer.Client(clientConn, muxer.Config{})
+	server := muxer.Server(serverConn, muxer.Config{})
 	t.Cleanup(func() {
 		client.Close()
 		server.Close()
 	})
 
-	a, err := client.OpenStream("")
+	a, err := client.OpenStream()
 	if err != nil {
 		t.Fatal(err)
 	}

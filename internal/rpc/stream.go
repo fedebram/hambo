@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/fedebram/hambo/muxer"
+	"github.com/fedebram/hambo/internal/muxer"
 )
 
 type envelope struct {
@@ -14,16 +14,16 @@ type envelope struct {
 
 // Stream sends and receives messages on one muxer stream.
 type Stream struct {
-	st  *muxer.Stream
+	raw *muxer.Stream
 	enc *json.Encoder
 	dec *json.Decoder
 }
 
-func newStream(st *muxer.Stream) *Stream {
+func newStream(raw *muxer.Stream) *Stream {
 	return &Stream{
-		st:  st,
-		enc: json.NewEncoder(st),
-		dec: json.NewDecoder(st),
+		raw: raw,
+		enc: json.NewEncoder(raw),
+		dec: json.NewDecoder(raw),
 	}
 }
 
@@ -46,7 +46,12 @@ func (s *Stream) Recv(v any) error {
 
 // CloseSend tells the other side we are done sending.
 func (s *Stream) CloseSend() error {
-	return s.st.Close()
+	return s.raw.CloseWrite()
+}
+
+// Close ends the stream in both directions.
+func (s *Stream) Close() error {
+	return s.raw.Close()
 }
 
 // sendError sends an error message.
@@ -54,16 +59,17 @@ func (s *Stream) sendError(msg string) error {
 	return s.enc.Encode(envelope{Error: msg})
 }
 
-// Method returns the method this stream was opened for.
-func (s *Stream) Method() string {
-	return s.st.Label()
-}
-
-// NewStream opens a new stream on sess for method.
-func NewStream(sess *muxer.Session, method string) (*Stream, error) {
-	st, err := sess.OpenStream(method)
+// OpenStream opens a stream on the muxer session for the given method.
+// The method name is sent as the first message, so the peer runs its handler.
+func OpenStream(sess *muxer.Session, method string) (*Stream, error) {
+	raw, err := sess.OpenStream()
 	if err != nil {
 		return nil, err
 	}
-	return newStream(st), nil
+	s := newStream(raw)
+	if err := s.enc.Encode(method); err != nil {
+		raw.Close()
+		return nil, err
+	}
+	return s, nil
 }

@@ -5,15 +5,24 @@ import (
 	"net"
 	"testing"
 
-	"github.com/fedebram/hambo/muxer"
+	"github.com/fedebram/hambo/internal/muxer"
 )
 
-func TestRouter(t *testing.T) {
+// newPair returns a client and a server session connected through a pipe.
+// Both are closed when the test ends.
+func newPair(t *testing.T) (*muxer.Session, *muxer.Session) {
 	clientConn, serverConn := net.Pipe()
-	client := muxer.Client(clientConn)
-	server := muxer.Server(serverConn)
-	defer client.Close()
-	defer server.Close()
+	client := muxer.Client(clientConn, muxer.Config{})
+	server := muxer.Server(serverConn, muxer.Config{})
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+	})
+	return client, server
+}
+
+func TestRouter(t *testing.T) {
+	client, server := newPair(t)
 
 	r := NewRouter()
 	r.Handle("a", func(s *Stream) error {
@@ -41,7 +50,7 @@ func TestRouter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := NewStream(client, tt.method)
+			s, err := OpenStream(client, tt.method)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -67,11 +76,7 @@ func TestRouter(t *testing.T) {
 }
 
 func TestRouterBothSides(t *testing.T) {
-	clientConn, serverConn := net.Pipe()
-	client := muxer.Client(clientConn)
-	server := muxer.Server(serverConn)
-	defer client.Close()
-	defer server.Close()
+	client, server := newPair(&testing.T{})
 
 	// the server side serves "server.hello"
 	serverRouter := NewRouter()
@@ -90,7 +95,7 @@ func TestRouterBothSides(t *testing.T) {
 	go clientRouter.Serve(client)
 
 	// the client opens a stream to the server's handler
-	s, err := NewStream(client, "server.hello")
+	s, err := OpenStream(client, "server.hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +108,7 @@ func TestRouterBothSides(t *testing.T) {
 	}
 
 	// the server opens a stream to the client's handler
-	s, err = NewStream(server, "client.hello")
+	s, err = OpenStream(server, "client.hello")
 	if err != nil {
 		t.Fatal(err)
 	}
