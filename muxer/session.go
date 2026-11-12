@@ -153,13 +153,20 @@ func (s *Session) readLoop() {
 		st := s.streams[id]
 		s.mu.Unlock()
 
+		if flags&flagReset != 0 {
+			if st != nil {
+				st.receiveReset()
+				s.removeStream(id)
+			}
+			continue
+		}
 		if st == nil && flags&flagOpen != 0 {
 			st = s.newRemoteStream(id)
 		}
 		if st == nil {
 			continue
 		}
-		if st.receive(payload, flags&flagClose != 0) {
+		if st.receive(payload, flags&flagFin != 0) {
 			s.removeStream(id)
 		}
 	}
@@ -185,7 +192,7 @@ func (s *Session) newRemoteStream(id uint32) *Stream {
 		return st
 	default: // queue full: refuse
 		s.removeStream(id)
-		go s.send(flagClose, id, nil)
+		go s.send(flagReset, id, nil)
 		return nil
 	}
 }

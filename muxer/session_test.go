@@ -36,8 +36,8 @@ func TestStreamRoundTrip(t *testing.T) {
 	if _, err := st.Write([]byte("hello")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	if err := st.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	if err := st.CloseWrite(); err != nil {
+		t.Fatalf("CloseWrite: %v", err)
 	}
 
 	if g := <-got; g != "hello" {

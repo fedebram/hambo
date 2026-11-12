@@ -23,7 +23,7 @@ func TestFrameRoundTrip(t *testing.T) {
 		{"multiple stay separate", []testFrame{{0, 1, []byte("hello")}, {0, 3, []byte("world")}}},
 		{"empty", []testFrame{{0, 1, []byte{}}}},
 		{"max size", []testFrame{{0, 1, make([]byte, maxPayload)}}},
-		{"flags", []testFrame{{flagOpen, 1, nil}, {flagOpen | flagClose, 3, []byte("hi")}}},
+		{"flags", []testFrame{{flagOpen, 1, nil}, {flagOpen | flagFin, 3, []byte("hi")}}},
 	}
 
 	for _, tt := range tests {

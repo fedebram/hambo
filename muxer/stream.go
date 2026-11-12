@@ -7,7 +7,10 @@ import (
 	"sync"
 )
 
-var ErrStreamClosed = errors.New("muxer: stream closed")
+var (
+	ErrStreamClosed = errors.New("muxer: stream closed")
+	ErrStreamReset  = errors.New("muxer: stream reset by peer")
+)
 
 // Stream is one bidirectional stream inside a session.
 type Stream struct {
@@ -18,6 +21,8 @@ type Stream struct {
 	buf          bytes.Buffer
 	localClosed  bool
 	remoteClosed bool
+	reset        bool
+	closed       bool // we called Close: no more reads or writes
 	notify       chan struct{}
 }
 
@@ -47,6 +52,19 @@ func (st *Stream) receive(payload []byte, closed bool) bool {
 	return bothClosed
 }
 
+// receiveReset is called by readLoop when the peer abandons the stream.
+func (st *Stream) receiveReset() {
+	st.mu.Lock()
+	st.reset = true
+	st.buf.Reset()
+	st.mu.Unlock()
+
+	select {
+	case st.notify <- struct{}{}:
+	default:
+	}
+}
+
 // Read reads data received on this stream. It waits if none is available.
 func (st *Stream) Read(p []byte) (int, error) {
 	if len(p) == 0 {
@@ -56,6 +74,14 @@ func (st *Stream) Read(p []byte) (int, error) {
 		sessionDead := st.session.isClosed()
 
 		st.mu.Lock()
+		if st.closed {
+			st.mu.Unlock()
+			return 0, ErrStreamClosed
+		}
+		if st.reset {
+			st.mu.Unlock()
+			return 0, ErrStreamReset
+		}
 		if st.buf.Len() > 0 {
 			n, _ := st.buf.Read(p)
 			st.mu.Unlock()
@@ -83,8 +109,12 @@ func (st *Stream) Write(p []byte) (int, error) {
 	n := 0
 	for len(p) > 0 {
 		st.mu.Lock()
+		reset := st.reset
 		closed := st.localClosed
 		st.mu.Unlock()
+		if reset {
+			return n, ErrStreamReset
+		}
 		if closed {
 			return n, ErrStreamClosed
 		}
@@ -101,9 +131,9 @@ func (st *Stream) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// Close tells the peer we are done writing.
-// Read keeps working until the peer closes too. Closing twice does nothing.
-func (st *Stream) Close() error {
+// CloseWrite tells the peer we are done writing (a FIN).
+// Read keeps working until the peer closes too. Calling it twice does nothing.
+func (st *Stream) CloseWrite() error {
 	st.mu.Lock()
 	if st.localClosed {
 		st.mu.Unlock()
@@ -113,9 +143,41 @@ func (st *Stream) Close() error {
 	bothClosed := st.remoteClosed
 	st.mu.Unlock()
 
-	err := st.session.send(flagClose, st.id, nil)
+	err := st.session.send(flagFin, st.id, nil)
 	if bothClosed {
 		st.session.removeStream(st.id)
 	}
 	return err
+}
+
+// Close ends the stream in both directions. Unread data is dropped.
+// If the peer may still be writing, it sends a reset so the peer stops;
+// otherwise a FIN, if we have not sent one yet. Closing twice does nothing.
+func (st *Stream) Close() error {
+	st.mu.Lock()
+	if st.closed || st.reset {
+		st.mu.Unlock()
+		return nil
+	}
+	st.closed = true
+	st.buf.Reset()
+	peerWriting := !st.remoteClosed
+	needFin := !st.localClosed
+	st.localClosed = true
+	st.mu.Unlock()
+
+	// wake up a Read waiting in another goroutine
+	select {
+	case st.notify <- struct{}{}:
+	default:
+	}
+
+	st.session.removeStream(st.id) // we ignore any frame that still arrives
+	if peerWriting {
+		return st.session.send(flagReset, st.id, nil)
+	}
+	if needFin {
+		return st.session.send(flagFin, st.id, nil)
+	}
+	return nil
 }
