@@ -83,6 +83,7 @@ func TestReadFrameErrors(t *testing.T) {
 		{"cut header in id", []byte{0, 0, 0, 0}, io.ErrUnexpectedEOF},
 		{"cut header in length", []byte{0, 0, 0, 0, 0, 1, 0, 0}, io.ErrUnexpectedEOF},
 		{"cut payload", append(frameHeader(0, 1, 10), "abc"...), io.ErrUnexpectedEOF},
+		{"header only, no payload", frameHeader(0, 1, 10), io.ErrUnexpectedEOF},
 		{"too large", frameHeader(0, 1, maxPayload+1), errPayloadTooLarge},
 	}
 
