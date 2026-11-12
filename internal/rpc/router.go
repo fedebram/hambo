@@ -9,8 +9,13 @@ import (
 	"github.com/fedebram/hambo/internal/muxer"
 )
 
-// methodTimeout is how long we wait for the method name after a stream opens.
-const methodTimeout = 10 * time.Second
+const (
+	// methodTimeout is how long we wait for the method name after a stream opens.
+	methodTimeout = 10 * time.Second
+	// lingerTimeout is how long a served stream may stay after our answer,
+	// waiting for the caller to close it, before we reset it.
+	lingerTimeout = time.Minute
+)
 
 // Handler serves one stream that the other side opened for its method.
 // If it returns an error, the other side's next Recv returns that error.
@@ -55,7 +60,7 @@ func (r *Router) Serve(sess *muxer.Session) error {
 // serveStream finds the handler of the stream's method and runs it.
 func (r *Router) serveStream(raw *muxer.Stream) {
 	s := newStream(raw)
-	defer s.Close() // the call is over
+	defer s.finish()
 
 	// the first message is the method name; give up if it doesn't come
 	timer := time.AfterFunc(methodTimeout, func() { raw.Close() })

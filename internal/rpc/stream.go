@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"encoding/json"
+	"io"
+	"time"
 
 	"github.com/fedebram/hambo/internal/muxer"
 )
@@ -71,4 +73,18 @@ func OpenStream(sess *muxer.Session, method string) (*Stream, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// finish ends a served call cleanly. We send FIN, then wait for the
+// caller's FIN before closing: closing earlier would reset the stream,
+// and the reset could throw away our answer before the caller reads it.
+// If the caller's FIN doesn't come within lingerTimeout, we reset anyway.
+func (s *Stream) finish() {
+	s.CloseSend()
+
+	timer := time.AfterFunc(lingerTimeout, func() { s.raw.Close() })
+	io.Copy(io.Discard, s.raw) // returns at the caller's FIN, or at the reset
+	timer.Stop()
+
+	s.raw.Close() // both sides are done: this only frees the stream
 }
