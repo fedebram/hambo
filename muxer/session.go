@@ -1,6 +1,7 @@
 package muxer
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +14,8 @@ const acceptBacklog = 64 // streams the peer opened, waiting for Accept
 
 type Session struct {
 	conn   io.ReadWriteCloser
-	sendCh chan writeRequest
+	sendCh chan writeRequest // data, open and FIN frames
+	ctrlCh chan writeRequest // window updates and resets
 
 	mu      sync.Mutex
 	streams map[uint32]*Stream
@@ -51,6 +53,7 @@ func newSession(conn io.ReadWriteCloser, firstID uint32) *Session {
 		nextID:   firstID,
 		acceptCh: make(chan *Stream, acceptBacklog),
 		sendCh:   make(chan writeRequest),
+		ctrlCh:   make(chan writeRequest),
 		done:     make(chan struct{}),
 	}
 	go s.readLoop()
@@ -114,30 +117,48 @@ func (s *Session) isClosed() bool {
 
 // send hands a frame to writeLoop and waits until it is written.
 func (s *Session) send(flags uint16, id uint32, payload []byte) error {
+	return s.sendOn(s.sendCh, flags, id, payload)
+}
+
+// sendCtrl is like send, for control frames: writeLoop writes them first.
+func (s *Session) sendCtrl(flags uint16, id uint32, payload []byte) error {
+	return s.sendOn(s.ctrlCh, flags, id, payload)
+}
+
+func (s *Session) sendOn(ch chan writeRequest, flags uint16, id uint32, payload []byte) error {
 	req := writeRequest{flags, id, payload, make(chan error, 1)}
 
 	select {
-	case s.sendCh <- req:
+	case ch <- req:
 	case <-s.done:
 		return s.err
 	}
 	return <-req.errCh
 }
 
+// writeLoop is the only goroutine that writes to conn.
 func (s *Session) writeLoop() {
 	for {
+		var req writeRequest
+		// if there is something on the control channel, we first write that!
 		select {
-		case req := <-s.sendCh:
-			err := writeFrame(s.conn, req.flags, req.id, req.payload)
-			if err != nil {
-				s.closeWithErr(err)
-				req.errCh <- s.err
+		case req = <-s.ctrlCh:
+		default:
+			select {
+			case req = <-s.ctrlCh:
+			case req = <-s.sendCh:
+			case <-s.done:
 				return
 			}
-			req.errCh <- nil
-		case <-s.done:
+		}
+
+		err := writeFrame(s.conn, req.flags, req.id, req.payload)
+		if err != nil {
+			s.closeWithErr(err)
+			req.errCh <- s.err
 			return
 		}
+		req.errCh <- nil
 	}
 }
 
@@ -160,13 +181,28 @@ func (s *Session) readLoop() {
 			}
 			continue
 		}
+		if flags&flagWindow != 0 {
+			if len(payload) != 4 {
+				s.closeWithErr(errBadWindowFrame) // the peer broke the protocol
+				return
+			}
+			if st != nil {
+				st.receiveWindow(binary.BigEndian.Uint32(payload))
+			}
+			continue
+		}
 		if st == nil && flags&flagOpen != 0 {
 			st = s.newRemoteStream(id)
 		}
 		if st == nil {
 			continue
 		}
-		if st.receive(payload, flags&flagFin != 0) {
+		bothClosed, err := st.receive(payload, flags&flagFin != 0)
+		if err != nil {
+			s.closeWithErr(err) // the peer broke the protocol
+			return
+		}
+		if bothClosed {
 			s.removeStream(id)
 		}
 	}
@@ -192,7 +228,7 @@ func (s *Session) newRemoteStream(id uint32) *Stream {
 		return st
 	default: // queue full: refuse
 		s.removeStream(id)
-		go s.send(flagReset, id, nil)
+		go s.sendCtrl(flagReset, id, nil)
 		return nil
 	}
 }

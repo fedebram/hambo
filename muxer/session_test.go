@@ -1,6 +1,7 @@
 package muxer
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net"
@@ -179,5 +180,40 @@ func TestRefuseWhenAcceptQueueFull(t *testing.T) {
 	// Read waits until the reset arrives
 	if _, err := st.Read(make([]byte, 1)); !errors.Is(err, ErrStreamReset) {
 		t.Fatalf("Read: got %v, want ErrStreamReset", err)
+	}
+}
+
+// Sending much more than the window only works if the reader grants more
+// window as it reads, and the writer waits for it.
+func TestTransferLargerThanWindow(t *testing.T) {
+	client, server := newPair(t)
+
+	want := make([]byte, 4*initialWindow)
+	for i := range want {
+		want[i] = byte(i % 251) // a pattern, so missing or reordered bytes show up
+	}
+
+	got := make(chan []byte, 1)
+	go func() {
+		peer, err := server.Accept()
+		if err != nil {
+			got <- nil
+			return
+		}
+		data, _ := io.ReadAll(peer)
+		got <- data
+	}()
+
+	st, err := client.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	if _, err := st.Write(want); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	st.CloseWrite()
+
+	if !bytes.Equal(<-got, want) {
+		t.Fatal("received data differs from what was sent")
 	}
 }

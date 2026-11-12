@@ -2,6 +2,7 @@ package muxer
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"sync"
@@ -10,7 +11,14 @@ import (
 var (
 	ErrStreamClosed = errors.New("muxer: stream closed")
 	ErrStreamReset  = errors.New("muxer: stream reset by peer")
+
+	errWindowExceeded = errors.New("muxer: peer sent more than the window allows")
+	errBadWindowFrame = errors.New("muxer: window frame payload is not 4 bytes")
 )
+
+// initialWindow is how many bytes each side may send on a stream
+// before the reader catches up and grants more.
+const initialWindow = 256 * 1024
 
 // Stream is one bidirectional stream inside a session.
 type Stream struct {
@@ -22,22 +30,44 @@ type Stream struct {
 	localClosed  bool
 	remoteClosed bool
 	reset        bool
-	closed       bool // we called Close: no more reads or writes
+	closed       bool
 	notify       chan struct{}
+
+	sendWindow uint32        // bytes we may still send before the peer grants more
+	recvWindow uint32        // bytes the peer may still send us
+	sendNotify chan struct{}
 }
 
 func newStream(id uint32, s *Session) *Stream {
 	return &Stream{
-		id:      id,
-		session: s,
-		notify:  make(chan struct{}, 1),
+		id:         id,
+		session:    s,
+		notify:     make(chan struct{}, 1),
+		sendWindow: initialWindow,
+		recvWindow: initialWindow,
+		sendNotify: make(chan struct{}, 1),
+	}
+}
+
+// signal leaves a wake-up in ch without blocking.
+// If one is already waiting, there is nothing to add.
+func signal(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
 	}
 }
 
 // receive stores the payload of a frame and wakes up a waiting Read.
-// It reports whether both sides are now closed.
-func (st *Stream) receive(payload []byte, closed bool) bool {
+// It reports whether both sides are now closed, or an error if the peer
+// sent more than its window allows.
+func (st *Stream) receive(payload []byte, closed bool) (bool, error) {
 	st.mu.Lock()
+	if uint32(len(payload)) > st.recvWindow {
+		st.mu.Unlock()
+		return false, errWindowExceeded
+	}
+	st.recvWindow -= uint32(len(payload))
 	st.buf.Write(payload)
 	if closed {
 		st.remoteClosed = true
@@ -45,11 +75,17 @@ func (st *Stream) receive(payload []byte, closed bool) bool {
 	bothClosed := st.localClosed && st.remoteClosed
 	st.mu.Unlock()
 
-	select {
-	case st.notify <- struct{}{}:
-	default:
-	}
-	return bothClosed
+	signal(st.notify)
+	return bothClosed, nil
+}
+
+// receiveWindow is called by readLoop when the peer grants us more window.
+func (st *Stream) receiveWindow(delta uint32) {
+	st.mu.Lock()
+	st.sendWindow += delta
+	st.mu.Unlock()
+
+	signal(st.sendNotify)
 }
 
 // receiveReset is called by readLoop when the peer abandons the stream.
@@ -59,13 +95,12 @@ func (st *Stream) receiveReset() {
 	st.buf.Reset()
 	st.mu.Unlock()
 
-	select {
-	case st.notify <- struct{}{}:
-	default:
-	}
+	signal(st.notify)
+	signal(st.sendNotify)
 }
 
 // Read reads data received on this stream. It waits if none is available.
+// After reading, it grants the peer more window when enough space is free.
 func (st *Stream) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -84,7 +119,12 @@ func (st *Stream) Read(p []byte) (int, error) {
 		}
 		if st.buf.Len() > 0 {
 			n, _ := st.buf.Read(p)
+			grant := st.grantWindow()
 			st.mu.Unlock()
+
+			if grant > 0 {
+				st.sendWindowUpdate(grant)
+			}
 			return n, nil
 		}
 		remoteClosed := st.remoteClosed
@@ -104,29 +144,63 @@ func (st *Stream) Read(p []byte) (int, error) {
 	}
 }
 
+// grantWindow works out how much new window to give the peer, and counts it
+// as given. It returns 0 when it is not worth sending an update yet.
+// st.mu must be held.
+func (st *Stream) grantWindow() uint32 {
+	if st.remoteClosed {
+		return 0 // the peer sends nothing more
+	}
+	// space that is free in buf and not yet promised to the peer
+	free := initialWindow - uint32(st.buf.Len()) - st.recvWindow
+	if free < initialWindow/2 {
+		return 0 // wait to free more
+	}
+	st.recvWindow += free
+	return free
+}
+
+// sendWindowUpdate tells the peer it may send delta more bytes.
+func (st *Stream) sendWindowUpdate(delta uint32) {
+	var payload [4]byte
+	binary.BigEndian.PutUint32(payload[:], delta)
+	// if this fails the session is dead, and the next Read will say so
+	st.session.sendCtrl(flagWindow, st.id, payload[:])
+}
+
 // Write sends p on this stream, split into frames of at most maxPayload bytes.
+// It waits when the peer's window is used up, until the peer reads and grants more.
 func (st *Stream) Write(p []byte) (int, error) {
 	n := 0
 	for len(p) > 0 {
 		st.mu.Lock()
-		reset := st.reset
-		closed := st.localClosed
-		st.mu.Unlock()
-		if reset {
+		if st.reset {
+			st.mu.Unlock()
 			return n, ErrStreamReset
 		}
-		if closed {
+		if st.localClosed {
+			st.mu.Unlock()
 			return n, ErrStreamClosed
 		}
+		if st.sendWindow == 0 {
+			st.mu.Unlock()
+			select {
+			case <-st.sendNotify:
+			case <-st.session.done:
+				return n, st.session.err
+			}
+			continue
+		}
+		size := min(len(p), maxPayload, int(st.sendWindow))
+		st.sendWindow -= uint32(size)
+		st.mu.Unlock()
 
-		chunk := p[:min(len(p), maxPayload)]
-
-		if err := st.session.send(0, st.id, chunk); err != nil {
+		if err := st.session.send(0, st.id, p[:size]); err != nil {
 			return n, err
 		}
 
-		n += len(chunk)
-		p = p[len(chunk):]
+		n += size
+		p = p[size:]
 	}
 	return n, nil
 }
@@ -142,6 +216,8 @@ func (st *Stream) CloseWrite() error {
 	st.localClosed = true
 	bothClosed := st.remoteClosed
 	st.mu.Unlock()
+
+	signal(st.sendNotify) // a Write waiting for window must stop
 
 	err := st.session.send(flagFin, st.id, nil)
 	if bothClosed {
@@ -166,15 +242,13 @@ func (st *Stream) Close() error {
 	st.localClosed = true
 	st.mu.Unlock()
 
-	// wake up a Read waiting in another goroutine
-	select {
-	case st.notify <- struct{}{}:
-	default:
-	}
+	// wake up a Read or Write waiting in another goroutine
+	signal(st.notify)
+	signal(st.sendNotify)
 
 	st.session.removeStream(st.id) // we ignore any frame that still arrives
 	if peerWriting {
-		return st.session.send(flagReset, st.id, nil)
+		return st.session.sendCtrl(flagReset, st.id, nil)
 	}
 	if needFin {
 		return st.session.send(flagFin, st.id, nil)
