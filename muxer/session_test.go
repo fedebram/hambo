@@ -217,3 +217,63 @@ func TestTransferLargerThanWindow(t *testing.T) {
 		t.Fatal("received data differs from what was sent")
 	}
 }
+
+// After the server's GoAway, the client cannot open new streams,
+// but a stream that was already open keeps working both ways.
+func TestGoAway(t *testing.T) {
+	client, server := newPair(t)
+
+	st, err := client.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	peer, err := server.Accept()
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	if err := server.GoAway(); err != nil {
+		t.Fatalf("GoAway: %v", err)
+	}
+
+	// Frames arrive in order: once the client reads this byte,
+	// it has already handled the go away sent before it.
+	peer.Write([]byte("a"))
+	buf := make([]byte, 1)
+	if _, err := io.ReadFull(st, buf); err != nil {
+		t.Fatalf("client Read: %v", err)
+	}
+
+	if _, err := client.OpenStream(); !errors.Is(err, ErrGoAway) {
+		t.Fatalf("OpenStream after go away: got %v, want ErrGoAway", err)
+	}
+
+	// the old stream still works the other way too
+	st.Write([]byte("b"))
+	if _, err := io.ReadFull(peer, buf); err != nil || buf[0] != 'b' {
+		t.Fatalf("server Read: got %q, %v", buf, err)
+	}
+}
+
+// A stream the client opens after the server sent go away is refused.
+// The client either sees the go away first (ErrGoAway), or its open
+// crosses the go away on the wire and the stream gets a reset.
+func TestGoAwayRefusesNewStreams(t *testing.T) {
+	client, server := newPair(t)
+
+	if err := server.GoAway(); err != nil {
+		t.Fatalf("GoAway: %v", err)
+	}
+
+	st, err := client.OpenStream()
+	if errors.Is(err, ErrGoAway) {
+		return // the client saw the go away first
+	}
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	// Read waits until the reset arrives
+	if _, err := st.Read(make([]byte, 1)); !errors.Is(err, ErrStreamReset) {
+		t.Fatalf("Read: got %v, want ErrStreamReset", err)
+	}
+}

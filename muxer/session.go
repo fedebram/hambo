@@ -8,7 +8,10 @@ import (
 	"sync"
 )
 
-var ErrSessionClosed = errors.New("muxer: session closed")
+var (
+	ErrSessionClosed = errors.New("muxer: session closed")
+	ErrGoAway        = errors.New("muxer: peer accepts no new streams")
+)
 
 const acceptBacklog = 64 // streams the peer opened, waiting for Accept
 
@@ -17,9 +20,11 @@ type Session struct {
 	sendCh chan writeRequest // data, open and FIN frames
 	ctrlCh chan writeRequest // window updates and resets
 
-	mu      sync.Mutex
-	streams map[uint32]*Stream
-	nextID  uint32
+	mu           sync.Mutex
+	streams      map[uint32]*Stream
+	nextID       uint32
+	localGoAway  bool // we sent go away: refuse new streams from the peer
+	remoteGoAway bool // the peer sent go away: OpenStream fails
 
 	acceptCh chan *Stream
 
@@ -62,8 +67,13 @@ func newSession(conn io.ReadWriteCloser, firstID uint32) *Session {
 }
 
 // OpenStream creates a new stream and tells the peer with an open frame.
+// It fails with ErrGoAway if the peer said it accepts no new streams.
 func (s *Session) OpenStream() (*Stream, error) {
 	s.mu.Lock()
+	if s.remoteGoAway {
+		s.mu.Unlock()
+		return nil, ErrGoAway
+	}
 	id := s.nextID
 	s.nextID += 2
 	st := newStream(id, s)
@@ -85,6 +95,20 @@ func (s *Session) Accept() (*Stream, error) {
 	case <-s.done:
 		return nil, s.err
 	}
+}
+
+// GoAway tells the peer we accept no new streams. Streams already open
+// keep working; call Close when they are done. Calling it twice does nothing.
+func (s *Session) GoAway() error {
+	s.mu.Lock()
+	if s.localGoAway {
+		s.mu.Unlock()
+		return nil
+	}
+	s.localGoAway = true
+	s.mu.Unlock()
+
+	return s.sendCtrl(flagGoAway, 0, nil)
 }
 
 // Close ends the session and closes the conn.
@@ -170,6 +194,13 @@ func (s *Session) readLoop() {
 			return
 		}
 
+		if flags&flagGoAway != 0 {
+			s.mu.Lock()
+			s.remoteGoAway = true
+			s.mu.Unlock()
+			continue
+		}
+
 		s.mu.Lock()
 		st := s.streams[id]
 		s.mu.Unlock()
@@ -215,11 +246,16 @@ func (s *Session) newRemoteStream(id uint32) *Stream {
 
 	s.mu.Lock()
 	ours := id%2 == s.nextID%2
-	if !ours {
+	goingAway := s.localGoAway
+	if !ours && !goingAway {
 		s.streams[id] = st
 	}
 	s.mu.Unlock()
 	if ours {
+		return nil
+	}
+	if goingAway { // we said no new streams
+		go s.sendCtrl(flagReset, id, nil)
 		return nil
 	}
 

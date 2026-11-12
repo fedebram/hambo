@@ -16,6 +16,7 @@ const (
 	flagFin    uint16 = 1 << 1 // the sender is done writing; it can still read
 	flagReset  uint16 = 1 << 2 // the sender abandoned the stream: no more reads or writes
 	flagWindow uint16 = 1 << 3 // the sender can receive more bytes; the payload says how many
+	flagGoAway uint16 = 1 << 4 // the sender accepts no new streams (sent on stream id 0)
 )
 
 var errPayloadTooLarge = errors.New("muxer: payload too large")
