@@ -129,3 +129,47 @@ func TestRouterBothSides(t *testing.T) {
 		t.Fatalf("server got %q", got.Text)
 	}
 }
+
+func TestCall(t *testing.T) {
+	client, server := newPair(t)
+
+	r := NewRouter()
+	r.Handle("echo", func(s *Stream) error {
+		var req msg
+		if err := s.Recv(&req); err != nil {
+			return err
+		}
+		return s.Send(msg{Text: "echo: " + req.Text})
+	})
+	r.Handle("hello", func(s *Stream) error {
+		return s.Send(msg{Text: "hello"})
+	})
+	r.Handle("fail", func(s *Stream) error {
+		return Errorf("node w9 not found")
+	})
+	go r.Serve(server)
+
+	// with a request
+	var got msg
+	if err := Call(client, "echo", msg{Text: "hi"}, &got); err != nil {
+		t.Fatalf("echo: %v", err)
+	}
+	if got.Text != "echo: hi" {
+		t.Fatalf("echo: got %q", got.Text)
+	}
+
+	// without a request
+	if err := Call(client, "hello", nil, &got); err != nil {
+		t.Fatalf("hello: %v", err)
+	}
+	if got.Text != "hello" {
+		t.Fatalf("hello: got %q", got.Text)
+	}
+
+	// the handler's error comes back as an *Error
+	err := Call(client, "fail", nil, &got)
+	var rpcErr *Error
+	if !errors.As(err, &rpcErr) || rpcErr.Msg != "node w9 not found" {
+		t.Fatalf("fail: got %v", err)
+	}
+}

@@ -75,6 +75,31 @@ func OpenStream(sess *muxer.Session, method string) (*Stream, error) {
 	return s, nil
 }
 
+// Call makes an rpc call: it sends req (if not nil) and reads the answer into resp.
+func Call(sess *muxer.Session, method string, req, resp any) error {
+	s, err := OpenStream(sess, method)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	if req != nil {
+		if err := s.Send(req); err != nil {
+			return err
+		}
+	}
+	if err := s.CloseSend(); err != nil {
+		return err
+	}
+	if err := s.Recv(resp); err != nil {
+		return err
+	}
+
+	// wait for the other side's FIN, so Close ends the call without a reset
+	io.Copy(io.Discard, s.raw)
+	return nil
+}
+
 // finish ends a served call cleanly. We send FIN, then wait for the
 // caller's FIN before closing: closing earlier would reset the stream,
 // and the reset could throw away our answer before the caller reads it.
