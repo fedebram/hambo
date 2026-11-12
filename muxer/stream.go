@@ -9,10 +9,10 @@ import (
 
 var ErrStreamClosed = errors.New("muxer: stream closed")
 
+// Stream is one bidirectional stream inside a session.
 type Stream struct {
 	id      uint32
 	session *Session
-	label   string
 
 	mu           sync.Mutex
 	buf          bytes.Buffer
@@ -21,24 +21,33 @@ type Stream struct {
 	notify       chan struct{}
 }
 
-func newStream(id uint32, s *Session, label string) *Stream {
+func newStream(id uint32, s *Session) *Stream {
 	return &Stream{
 		id:      id,
 		session: s,
-		label:   label,
 		notify:  make(chan struct{}, 1),
 	}
 }
 
-// Label returns the label the opener attached to this stream.
-func (st *Stream) Label() string {
-	return st.label
+// receive stores the payload of a frame and wakes up a waiting Read.
+// It reports whether both sides are now closed.
+func (st *Stream) receive(payload []byte, closed bool) bool {
+	st.mu.Lock()
+	st.buf.Write(payload)
+	if closed {
+		st.remoteClosed = true
+	}
+	bothClosed := st.localClosed && st.remoteClosed
+	st.mu.Unlock()
+
+	select {
+	case st.notify <- struct{}{}:
+	default:
+	}
+	return bothClosed
 }
 
 // Read reads data received on this stream. It waits if none is available.
-//
-// It returns io.EOF when the peer closed the stream and all its data was read,
-// or ErrSessionClosed if the session died first (data may be incomplete).
 func (st *Stream) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -59,7 +68,7 @@ func (st *Stream) Read(p []byte) (int, error) {
 			return 0, io.EOF // peer finished: we have everything
 		}
 		if sessionDead {
-			return 0, ErrSessionClosed // broke before the peer finished
+			return 0, st.session.err
 		}
 
 		select {
@@ -82,9 +91,7 @@ func (st *Stream) Write(p []byte) (int, error) {
 
 		chunk := p[:min(len(p), maxPayload)]
 
-		// the user might reuse the bytes. we need to clone
-		f := frame{id: st.id, payload: bytes.Clone(chunk)}
-		if err := st.session.send(f); err != nil {
+		if err := st.session.send(0, st.id, chunk); err != nil {
 			return n, err
 		}
 
@@ -95,7 +102,7 @@ func (st *Stream) Write(p []byte) (int, error) {
 }
 
 // Close tells the peer we are done writing.
-// Read keeps working until the peer closes too. Closing twice is a no-op.
+// Read keeps working until the peer closes too. Closing twice does nothing.
 func (st *Stream) Close() error {
 	st.mu.Lock()
 	if st.localClosed {
@@ -106,29 +113,9 @@ func (st *Stream) Close() error {
 	bothClosed := st.remoteClosed
 	st.mu.Unlock()
 
-	if err := st.session.send(frame{flags: flagClose, id: st.id}); err != nil {
-		return err
-	}
+	err := st.session.send(flagClose, st.id, nil)
 	if bothClosed {
 		st.session.removeStream(st.id)
 	}
-	return nil
-}
-
-// receive is called by readLoop for every frame of this stream.
-// It reports whether both sides are now closed.
-func (st *Stream) receive(payload []byte, remoteClose bool) bool {
-	st.mu.Lock()
-	st.buf.Write(payload)
-	if remoteClose {
-		st.remoteClosed = true
-	}
-	bothClosed := st.localClosed && st.remoteClosed
-	st.mu.Unlock()
-
-	select {
-	case st.notify <- struct{}{}:
-	default:
-	}
-	return bothClosed
+	return err
 }
