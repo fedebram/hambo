@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -59,8 +60,9 @@ func TestStreamError(t *testing.T) {
 
 	var got msg
 	err := b.Recv(&got)
-	if err == nil || err.Error() != "node w9 not found" {
-		t.Fatalf("got %v, want the remote error", err)
+	var rpcErr *Error
+	if !errors.As(err, &rpcErr) || rpcErr.Msg != "node w9 not found" {
+		t.Fatalf("got %v, want the remote error as *Error", err)
 	}
 	// an error message carries no data: got stays empty
 	if got.Text != "" {

@@ -1,6 +1,8 @@
 package rpc
 
 import (
+	"errors"
+	"log"
 	"sync"
 	"time"
 
@@ -73,6 +75,13 @@ func (r *Router) serveStream(raw *muxer.Stream) {
 		return
 	}
 	if err := h(s); err != nil {
-		s.sendError(err.Error())
+		var rpcErr *Error
+		if errors.As(err, &rpcErr) {
+			s.sendError(rpcErr.Msg)
+		} else {
+			log.Printf("rpc %s: %v", method, err)
+			s.sendError("internal error")
+		}
 	}
+
 }

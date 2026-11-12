@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"encoding/json"
-	"errors"
 
 	"github.com/fedebram/hambo/internal/muxer"
 )
@@ -39,7 +38,7 @@ func (s *Stream) Recv(v any) error {
 		return err
 	}
 	if env.Error != "" {
-		return errors.New(env.Error)
+		return &Error{Msg: env.Error}
 	}
 	return nil
 }

@@ -32,7 +32,10 @@ func TestRouter(t *testing.T) {
 		return s.Send(msg{Text: "from b"})
 	})
 	r.Handle("fail", func(s *Stream) error {
-		return errors.New("node w9 not found")
+		return Errorf("node w9 not found")
+	})
+	r.Handle("internal", func(s *Stream) error {
+		return errors.New("open /path: permission denied")
 	})
 	go r.Serve(server)
 
@@ -45,6 +48,7 @@ func TestRouter(t *testing.T) {
 		{"dispatch to a", "a", "from a", ""},
 		{"dispatch to b", "b", "from b", ""},
 		{"handler error", "fail", "", "node w9 not found"},
+		{"internal error is hidden", "internal", "", "internal error"},
 		{"unknown method", "nope", "", "unknown method: nope"},
 	}
 
@@ -54,6 +58,8 @@ func TestRouter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			s.CloseSend()   // our request is complete
+			defer s.Close() // the call is over
 
 			var got msg
 			err = s.Recv(&got)
@@ -76,7 +82,7 @@ func TestRouter(t *testing.T) {
 }
 
 func TestRouterBothSides(t *testing.T) {
-	client, server := newPair(&testing.T{})
+	client, server := newPair(t)
 
 	// the server side serves "server.hello"
 	serverRouter := NewRouter()
@@ -99,6 +105,8 @@ func TestRouterBothSides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.CloseSend()
+	defer s.Close()
 	var got msg
 	if err := s.Recv(&got); err != nil {
 		t.Fatal(err)
@@ -112,6 +120,8 @@ func TestRouterBothSides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.CloseSend()
+	defer s.Close()
 	if err := s.Recv(&got); err != nil {
 		t.Fatal(err)
 	}
