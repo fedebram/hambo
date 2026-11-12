@@ -11,6 +11,9 @@ const (
 	maxPayload = 16 * 1024 // 16 KB
 )
 
+// we use flags for everything. Nothind wrong with it...
+// we can also swap some like ping pong with a type inside the frame like yamux.
+
 const (
 	flagOpen   uint16 = 1 << 0 // the sender opens a new stream
 	flagFin    uint16 = 1 << 1 // the sender is done writing; it can still read
