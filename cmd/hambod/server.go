@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/fedebram/hambo/internal/api"
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/store"
 	"github.com/fedebram/hambo/internal/transport"
@@ -70,7 +71,7 @@ func runServer(dataDir, listen string) error {
 			return s.Send("already joined")
 		}
 
-		var req joinRequest
+		var req api.JoinRequest
 		if err := s.Recv(&req); err != nil {
 			return err
 		}

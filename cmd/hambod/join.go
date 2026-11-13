@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fedebram/hambo/internal/api"
 	"github.com/fedebram/hambo/internal/noiseconn"
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/transport"
@@ -64,7 +65,7 @@ func runJoin(dataDir, server, token string) error {
 
 	// "joined", or "already joined" if this worker joined before
 	var answer string
-	err = rpc.Call(sess, "join", joinRequest{ID: id, Secret: secret}, &answer)
+	err = rpc.Call(sess, "join", api.JoinRequest{ID: id, Secret: secret}, &answer)
 	var rpcErr *rpc.Error
 	if errors.As(err, &rpcErr) {
 		return fmt.Errorf("join failed: %w\ncreate a new token with: hambo token create", err)

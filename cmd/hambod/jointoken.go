@@ -5,12 +5,6 @@ import (
 	"errors"
 )
 
-// joinRequest is what a new worker sends to join rpc.
-type joinRequest struct {
-	ID     []byte `json:"id"`
-	Secret []byte `json:"secret"`
-}
-
 // joinToken puts the server's public key (32 bytes), the token ID (6 bytes)
 // and the secret (32 bytes) one after the other, and encodes them as
 // URL-safe base64 without padding.
