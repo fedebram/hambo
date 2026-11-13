@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"errors"
 	"log"
 	"sync"
@@ -19,7 +20,8 @@ const (
 
 // Handler serves one stream that the other side opened for its method.
 // If it returns an error, the other side's next Recv returns that error.
-type Handler func(s *Stream) error
+// ctx is cancelled when the session ends.
+type Handler func(ctx context.Context, s *Stream) error
 
 // Router runs the right handler for each stream the other side opens,
 // picked by the method name the stream starts with.
@@ -45,20 +47,24 @@ func (r *Router) Handle(method string, h Handler) {
 	r.handlers[method] = h
 }
 
-// Serve serves every stream the other side opens on sess,
-// until the session ends.
-func (r *Router) Serve(sess *muxer.Session) error {
+// Serve serves every stream the other side opens on sess, until the
+// session ends. Handlers get a ctx made from ctx, cancelled when the
+// session ends.
+func (r *Router) Serve(ctx context.Context, sess *muxer.Session) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	for {
 		raw, err := sess.Accept()
 		if err != nil {
 			return err
 		}
-		go r.serveStream(raw)
+		go r.serveStream(ctx, raw)
 	}
 }
 
 // serveStream finds the handler of the stream's method and runs it.
-func (r *Router) serveStream(raw *muxer.Stream) {
+func (r *Router) serveStream(ctx context.Context, raw *muxer.Stream) {
 	s := newStream(raw)
 	defer s.finish()
 
@@ -79,7 +85,7 @@ func (r *Router) serveStream(raw *muxer.Stream) {
 		s.sendError("unknown method: " + method)
 		return
 	}
-	if err := h(s); err != nil {
+	if err := h(ctx, s); err != nil {
 		var rpcErr *Error
 		if errors.As(err, &rpcErr) {
 			s.sendError(rpcErr.Msg)
@@ -88,5 +94,4 @@ func (r *Router) serveStream(raw *muxer.Stream) {
 			s.sendError("internal error")
 		}
 	}
-
 }

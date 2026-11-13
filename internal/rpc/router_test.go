@@ -1,9 +1,11 @@
 package rpc
 
 import (
+	"context"
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/fedebram/hambo/internal/muxer"
 )
@@ -25,19 +27,19 @@ func TestRouter(t *testing.T) {
 	client, server := newPair(t)
 
 	r := NewRouter()
-	r.Handle("a", func(s *Stream) error {
+	r.Handle("a", func(ctx context.Context, s *Stream) error {
 		return s.Send(msg{Text: "from a"})
 	})
-	r.Handle("b", func(s *Stream) error {
+	r.Handle("b", func(ctx context.Context, s *Stream) error {
 		return s.Send(msg{Text: "from b"})
 	})
-	r.Handle("fail", func(s *Stream) error {
+	r.Handle("fail", func(ctx context.Context, s *Stream) error {
 		return Errorf("node w9 not found")
 	})
-	r.Handle("internal", func(s *Stream) error {
+	r.Handle("internal", func(ctx context.Context, s *Stream) error {
 		return errors.New("open /path: permission denied")
 	})
-	go r.Serve(server)
+	go r.Serve(t.Context(), server)
 
 	tests := []struct {
 		name    string
@@ -86,19 +88,19 @@ func TestRouterBothSides(t *testing.T) {
 
 	// the server side serves "server.hello"
 	serverRouter := NewRouter()
-	serverRouter.Handle("server.hello", func(s *Stream) error {
+	serverRouter.Handle("server.hello", func(ctx context.Context, s *Stream) error {
 		return s.Send(msg{Text: "hello from server"})
 	})
-	go serverRouter.Serve(server)
+	go serverRouter.Serve(t.Context(), server)
 
 	// the client side also serves: "client.hello"
 	// this is the main reason the muxer and so on was built!!!!
 	// maybe can be ux better but for now it is pretty good.
 	clientRouter := NewRouter()
-	clientRouter.Handle("client.hello", func(s *Stream) error {
+	clientRouter.Handle("client.hello", func(ctx context.Context, s *Stream) error {
 		return s.Send(msg{Text: "hello from client"})
 	})
-	go clientRouter.Serve(client)
+	go clientRouter.Serve(t.Context(), client)
 
 	// the client opens a stream to the server's handler
 	s, err := OpenStream(client, "server.hello")
@@ -134,20 +136,20 @@ func TestCall(t *testing.T) {
 	client, server := newPair(t)
 
 	r := NewRouter()
-	r.Handle("echo", func(s *Stream) error {
+	r.Handle("echo", func(ctx context.Context, s *Stream) error {
 		var req msg
 		if err := s.Recv(&req); err != nil {
 			return err
 		}
 		return s.Send(msg{Text: "echo: " + req.Text})
 	})
-	r.Handle("hello", func(s *Stream) error {
+	r.Handle("hello", func(ctx context.Context, s *Stream) error {
 		return s.Send(msg{Text: "hello"})
 	})
-	r.Handle("fail", func(s *Stream) error {
+	r.Handle("fail", func(ctx context.Context, s *Stream) error {
 		return Errorf("node w9 not found")
 	})
-	go r.Serve(server)
+	go r.Serve(t.Context(), server)
 
 	// with a request
 	var got msg
@@ -171,5 +173,36 @@ func TestCall(t *testing.T) {
 	var rpcErr *Error
 	if !errors.As(err, &rpcErr) || rpcErr.Msg != "node w9 not found" {
 		t.Fatalf("fail: got %v", err)
+	}
+}
+
+// A handler busy with other work learns through ctx that the session ended.
+func TestHandlerCtxCancelledWhenSessionEnds(t *testing.T) {
+	client, server := newPair(t)
+
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	r := NewRouter()
+	r.Handle("wait", func(ctx context.Context, s *Stream) error {
+		close(started)
+		<-ctx.Done() // busy: not reading or writing the stream
+		close(stopped)
+		return nil
+	})
+	go r.Serve(t.Context(), server)
+
+	s, err := OpenStream(client, "wait")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	<-started
+
+	client.Close() // the session ends
+
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the handler's ctx was not cancelled when the session ended")
 	}
 }
