@@ -68,7 +68,7 @@ func runJoin(dataDir, server, token string) error {
 
 	// "joined", or "already joined" if this worker joined before
 	var answer string
-	err = rpc.Call(sess, "join", api.JoinRequest{ID: id, Secret: secret}, &answer)
+	err = rpc.Call(sess, "join", api.JoinRequest{ID: id, Secret: secret, WGPublic: w.WGPublic}, &answer)
 	var rpcErr *rpc.Error
 	if errors.As(err, &rpcErr) {
 		return fmt.Errorf("join failed: %w\ncreate a new token with: hambo token create", err)

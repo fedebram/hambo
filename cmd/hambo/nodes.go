@@ -81,13 +81,13 @@ func runNodesList(configPath string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "NAME\tROLE\tSTATUS\tAGE")
+	fmt.Fprintln(w, "NAME\tROLE\tSTATUS\tSUBNET\tAGE")
 	for _, n := range nodes {
 		status := "offline"
 		if n.Connected {
 			status = "connected"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", n.Name, n.Role, status, age(n.JoinedAt))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", n.Name, n.Role, status, n.Subnet, age(n.JoinedAt))
 	}
 	return w.Flush()
 }

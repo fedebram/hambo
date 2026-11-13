@@ -24,6 +24,10 @@ type Client struct {
 	Name      string
 	Role      Role
 	CreatedAt time.Time
+
+	// only for workers
+	WGPublic []byte
+	Subnet   string // like 10.100.1.0/24
 }
 
 // Role returns the role of the client with this public key,
@@ -37,19 +41,19 @@ func (s *Store) Role(ctx context.Context, pub []byte) (Role, error) {
 	return r, err
 }
 
-// insertClient adds one client.
-const insertClient = "INSERT INTO clients (public_key, name, role, created_at) VALUES (?, ?, ?, ?)"
-
-// AddClient adds c. It fails if a client with the same public key exists.
+// AddClient adds c, without wireguard key and subnet (used for the admin).
+// It fails if a client with the same public key exists.
 func (s *Store) AddClient(ctx context.Context, c Client) error {
-	_, err := s.write.ExecContext(ctx, insertClient, c.PublicKey, c.Name, c.Role, time.Now().Unix())
+	_, err := s.write.ExecContext(ctx,
+		"INSERT INTO clients (public_key, name, role, created_at) VALUES (?, ?, ?, ?)",
+		c.PublicKey, c.Name, c.Role, time.Now().Unix())
 	return err
 }
 
 // ListNodes returns the workers, sorted by name.
 func (s *Store) ListNodes(ctx context.Context) ([]Client, error) {
 	rows, err := s.read.QueryContext(ctx,
-		"SELECT public_key, name, role, created_at FROM clients WHERE role = ? ORDER BY name",
+		"SELECT public_key, name, role, created_at, wg_public, subnet FROM clients WHERE role = ? ORDER BY name",
 		RoleWorker)
 	if err != nil {
 		return nil, err
@@ -60,7 +64,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]Client, error) {
 	for rows.Next() {
 		var c Client
 		var created int64
-		if err := rows.Scan(&c.PublicKey, &c.Name, &c.Role, &created); err != nil {
+		if err := rows.Scan(&c.PublicKey, &c.Name, &c.Role, &created, &c.WGPublic, &c.Subnet); err != nil {
 			return nil, err
 		}
 		c.CreatedAt = time.Unix(created, 0)

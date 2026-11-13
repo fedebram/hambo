@@ -80,8 +80,16 @@ func runServer(dataDir, listen string) error {
 		if err := s.Recv(&req); err != nil {
 			return err
 		}
+		// a simple check
+		if len(req.WGPublic) != 32 {
+			return rpc.Errorf("invalid wireguard key")
+		}
 		name := workerName(p.PubKey)
-		ok, err := st.Join(ctx, req.ID, req.Secret, store.Client{PublicKey: p.PubKey, Name: name, Role: store.RoleWorker})
+		c := store.Client{PublicKey: p.PubKey, Name: name, Role: store.RoleWorker, WGPublic: req.WGPublic}
+		ok, err := st.Join(ctx, req.ID, req.Secret, c, sf.CIDR)
+		if errors.Is(err, store.ErrNoFreeSubnet) {
+			return rpc.Errorf("the cluster is full: no free subnet in %s", sf.CIDR)
+		}
 		if err != nil {
 			return err
 		}
@@ -102,6 +110,7 @@ func runServer(dataDir, listen string) error {
 				Name:      c.Name,
 				Role:      string(c.Role),
 				Connected: reg.get(c.PublicKey) != nil,
+				Subnet:    c.Subnet,
 				JoinedAt:  c.CreatedAt,
 			})
 		}
