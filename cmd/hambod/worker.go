@@ -47,11 +47,16 @@ func runWorker(dataDir string) error {
 
 	for {
 		err := connectAndServe(w, key, r)
+		if errors.Is(err, errNotJoined) {
+			return err // retrying won't help
+		}
 		fmt.Println("disconnected:", err)
 		fmt.Println("connecting again in 3s")
 		time.Sleep(3 * time.Second)
 	}
 }
+
+var errNotJoined = errors.New("not joined: run hambod join --token <token>")
 
 // connectAndServe connects to the server and serves its calls
 // until the connection ends.
@@ -61,6 +66,17 @@ func connectAndServe(w workerFile, key noise.DHKey, r *rpc.Router) error {
 		return err
 	}
 	defer sess.Close()
+
+	// the server refuses ping from a key it doesn't know
+	var pong string
+	err = rpc.Call(sess, "ping", nil, &pong)
+	var rpcErr *rpc.Error
+	if errors.As(err, &rpcErr) {
+		return errNotJoined
+	}
+	if err != nil {
+		return err
+	}
 
 	fmt.Println("connected to", w.Server)
 	return r.Serve(context.Background(), sess)
