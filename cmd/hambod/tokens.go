@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -74,31 +75,33 @@ func (ts *tokenStore) create() (id, secret []byte, err error) {
 	return id, secret, nil
 }
 
-// lookup returns the secret of the token with this id, or nil if there is none.
-func (ts *tokenStore) lookup(id []byte) []byte {
+// consume deletes the token if id and secret match. It reports false
+// if there is no such token or the secret is wrong.
+func (ts *tokenStore) consume(id, secret []byte) (bool, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 
-	return ts.tokens[string(id)] // nil if not found
-}
-
-// consume deletes the token with this id. It reports false if the token
-// was already gone.
-func (ts *tokenStore) consume(id []byte) (bool, error) {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-
-	secret, ok := ts.tokens[string(id)]
+	stored, ok := ts.tokens[string(id)]
 	if !ok {
+		return false, nil
+	}
+	// constant time
+	if subtle.ConstantTimeCompare(stored, secret) != 1 {
 		return false, nil
 	}
 
 	delete(ts.tokens, string(id))
 	if err := ts.save(); err != nil {
-		ts.tokens[string(id)] = secret
+		ts.tokens[string(id)] = stored
 		return false, err
 	}
 	return true, nil
+}
+
+// joinRequest is what a new worker sends to join rpc.
+type joinRequest struct {
+	ID     []byte `json:"id"`
+	Secret []byte `json:"secret"`
 }
 
 // save writes all tokens to the file. The caller must hold ts.mu.

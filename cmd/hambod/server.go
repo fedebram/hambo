@@ -67,6 +67,31 @@ func runServer(dataDir, listen string) error {
 		}
 		return s.Send(joinToken(key.Public, id, secret))
 	}))
+	r.Handle("join", requireRole(roleUnknown, roleWorker)(func(ctx context.Context, s *rpc.Stream) error {
+		p := peerFrom(ctx)
+		if p.Role == roleWorker {
+			return s.Send("already joined")
+		}
+
+		var req joinRequest
+		if err := s.Recv(&req); err != nil {
+			return err
+		}
+		ok, err := tokens.consume(req.ID, req.Secret)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return rpc.Errorf("invalid or used token")
+		}
+
+		name := workerName(p.PubKey)
+		if err := clients.add(client{Name: name, Public: p.PubKey, Role: roleWorker}); err != nil {
+			return err
+		}
+		fmt.Println("worker joined:", name)
+		return s.Send("joined")
+	}))
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {

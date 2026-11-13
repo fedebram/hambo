@@ -6,18 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
 
 	"github.com/fedebram/hambo/internal/noiseconn"
 	"github.com/fedebram/hambo/internal/rpc"
-	"github.com/fedebram/hambo/muxer"
+	"github.com/fedebram/hambo/internal/transport"
 	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
 )
-
-var errUnreachable = errors.New("can't reach the server")
 
 // workerFile is everything a worker needs to connect to its server.
 type workerFile struct {
@@ -59,53 +56,25 @@ func runJoin(dataDir, server, token string) error {
 	}
 	key := noise.DHKey{Private: w.Private, Public: w.Public}
 
-	// check if already joined with a normal connect
-	err = connectAndPing(w.Server, func(conn net.Conn) (*noiseconn.Conn, error) {
-		return noiseconn.Client(conn, key, w.ServerPublic)
-	})
-	if err == nil {
-		fmt.Println("already joined", w.Server)
-		return nil
-	}
-	if errors.Is(err, errUnreachable) {
-		return err
-	}
-
-	// not joined
-	err = connectAndPing(w.Server, func(conn net.Conn) (*noiseconn.Conn, error) {
-		return noiseconn.Join(conn, key, w.ServerPublic, id, secret)
-	})
+	sess, err := transport.Dial(w.Server, key, w.ServerPublic)
 	if err != nil {
-		return fmt.Errorf("join failed: %w\n"+
-			"run hambod join again; if it still fails, the token may be wrong, expired or already used:\n"+
-			"create a new one with: hambo token create", err)
+		return fmt.Errorf("can't connect to %s: %w", w.Server, err)
 	}
-
-	fmt.Println("joined", w.Server)
-	return nil
-}
-
-// connectAndPing dials addr, runs the given handshake, and calls ping.
-func connectAndPing(addr string, handshake func(net.Conn) (*noiseconn.Conn, error)) error {
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("%w: %v", errUnreachable, err)
-	}
-	nc, err := handshake(conn)
-	if err != nil {
-		conn.Close()
-		return err
-	}
-
-	sess := muxer.Client(nc)
 	defer sess.Close()
 
-	s, err := rpc.NewStream(sess, "ping")
-	if err != nil {
-		return err
-	}
+	// "joined", or "already joined" if this worker joined before
 	var answer string
-	return s.Recv(&answer)
+	err = rpc.Call(sess, "join", joinRequest{ID: id, Secret: secret}, &answer)
+	var rpcErr *rpc.Error
+	if errors.As(err, &rpcErr) {
+		return fmt.Errorf("join failed: %w\ncreate a new token with: hambo token create", err)
+	}
+	if err != nil {
+		return fmt.Errorf("join failed: %w\nrun hambod join again", err)
+	}
+
+	fmt.Println(answer, w.Server)
+	return nil
 }
 
 func loadOrCreateWorker(dataDir, server string, serverPublic []byte) (workerFile, error) {

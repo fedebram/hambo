@@ -1,18 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/fedebram/hambo/internal/noiseconn"
 	"github.com/fedebram/hambo/internal/rpc"
-	"github.com/fedebram/hambo/muxer"
+	"github.com/fedebram/hambo/internal/transport"
 	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
 )
@@ -42,7 +41,7 @@ func runWorker(dataDir string) error {
 
 	// the methods the server can call on this worker
 	r := rpc.NewRouter()
-	r.Handle("health", func(s *rpc.Stream) error {
+	r.Handle("health", func(ctx context.Context, s *rpc.Stream) error {
 		return s.Send("ok")
 	})
 
@@ -57,21 +56,14 @@ func runWorker(dataDir string) error {
 // connectAndServe connects to the server and serves its calls
 // until the connection ends.
 func connectAndServe(w workerFile, key noise.DHKey, r *rpc.Router) error {
-	conn, err := net.Dial("tcp", w.Server)
+	sess, err := transport.Dial(w.Server, key, w.ServerPublic)
 	if err != nil {
 		return err
 	}
-	nc, err := noiseconn.Client(conn, key, w.ServerPublic)
-	if err != nil {
-		conn.Close()
-		return fmt.Errorf("handshake failed (has this worker joined?): %w", err)
-	}
-
-	sess := muxer.Client(nc)
 	defer sess.Close()
 
 	fmt.Println("connected to", w.Server)
-	return r.Serve(sess)
+	return r.Serve(context.Background(), sess)
 }
 
 // loadWorker reads the worker's identity from workers.json
