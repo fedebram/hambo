@@ -33,13 +33,8 @@ func runPing(configPath string) error {
 	}
 	defer sess.Close()
 
-	s, err := rpc.NewStream(sess, "ping")
-	if err != nil {
-		return err
-	}
-
 	var answer string
-	if err := s.Recv(&answer); err != nil {
+	if err := rpc.Call(sess, "ping", nil, &answer); err != nil {
 		return err
 	}
 

@@ -39,13 +39,8 @@ func runTokenCreate(configPath string) error {
 	}
 	defer sess.Close()
 
-	s, err := rpc.NewStream(sess, "tokens.create")
-	if err != nil {
-		return err
-	}
-
 	var token string
-	if err := s.Recv(&token); err != nil {
+	if err := rpc.Call(sess, "tokens.create", nil, &token); err != nil {
 		return err
 	}
 

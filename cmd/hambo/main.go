@@ -5,11 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
 	"os"
 
-	"github.com/fedebram/hambo/internal/noiseconn"
-	"github.com/fedebram/hambo/muxer"
+	"github.com/fedebram/hambo/internal/muxer"
+	"github.com/fedebram/hambo/internal/transport"
 	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
 )
@@ -56,19 +55,12 @@ func loadCredentials(path string) (credentials, error) {
 	return c, nil
 }
 
-// connect dials the server, runs the handshake and starts a session.
+// connect opens a session with the server in creds.
 func connect(creds credentials) (*muxer.Session, error) {
-	conn, err := net.Dial("tcp", creds.Server)
-	if err != nil {
-		return nil, err
-	}
-
 	key := noise.DHKey{Private: creds.ClientPrivate, Public: creds.ClientPublic}
-	nc, err := noiseconn.Client(conn, key, creds.ServerPublic)
+	sess, err := transport.Dial(creds.Server, key, creds.ServerPublic)
 	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("handshake with %s failed (is this key allowed?): %w", creds.Server, err)
+		return nil, fmt.Errorf("connect to %s failed (is this key allowed?): %w", creds.Server, err)
 	}
-
-	return muxer.Client(nc), nil
+	return sess, nil
 }
