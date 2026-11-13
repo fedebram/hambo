@@ -39,11 +39,13 @@ func serverCmd() *cobra.Command {
 }
 
 func runServer(dataDir, listen string) error {
-	key, err := loadServerKey(dataDir)
+	sf, err := loadServerFile(dataDir)
 	if err != nil {
 		return err
 	}
+	key := noise.DHKey{Private: sf.Private, Public: sf.Public}
 	fmt.Println("server public key:", base64.StdEncoding.EncodeToString(key.Public))
+	fmt.Println("cluster cidr:", sf.CIDR)
 
 	st, err := store.Open(filepath.Join(dataDir, "hambo.db"))
 	if err != nil {
@@ -197,19 +199,20 @@ func workerName(pub []byte) string {
 	return "worker-" + hex.EncodeToString(pub[:4])
 }
 
-func loadServerKey(dataDir string) (noise.DHKey, error) {
+// loadServerFile reads the server's key and cluster range from server.json.
+func loadServerFile(dataDir string) (serverFile, error) {
 	path := filepath.Join(dataDir, "server.json")
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return noise.DHKey{}, fmt.Errorf("not initialized: %s not found, run: hambod init", path)
+		return serverFile{}, fmt.Errorf("not initialized: %s not found, run: hambod init", path)
 	}
 	if err != nil {
-		return noise.DHKey{}, err
+		return serverFile{}, err
 	}
 
-	var kf keyFile
-	if err := json.Unmarshal(data, &kf); err != nil {
-		return noise.DHKey{}, fmt.Errorf("%s: %w", path, err)
+	var sf serverFile
+	if err := json.Unmarshal(data, &sf); err != nil {
+		return serverFile{}, fmt.Errorf("%s: %w", path, err)
 	}
-	return noise.DHKey{Private: kf.Private, Public: kf.Public}, nil
+	return sf, nil
 }

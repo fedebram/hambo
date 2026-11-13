@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path/filepath"
 
 	"github.com/fedebram/hambo/internal/noiseconn"
 	"github.com/fedebram/hambo/internal/store"
-	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
 )
 
@@ -26,35 +26,43 @@ type credentials struct {
 func initCmd() *cobra.Command {
 	var dataDir string
 	var addr string
+	var cidr string
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize the server: keys and admin credentials",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return initServer(dataDir, addr)
+			return initServer(dataDir, addr, cidr)
 		},
 	}
 	cmd.Flags().StringVar(&dataDir, "data-dir", "./data", "where to store the server's files")
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:6443", "the server address to write in the admin credentials")
+	cmd.Flags().StringVar(&cidr, "cidr", "10.100.0.0/16", "the ip range of the cluster, each node gets a /24 of it")
 	return cmd
 }
 
-// keyFile is how a keypair is stored on disk.
-type keyFile struct {
-	Private []byte `json:"private"`
-	Public  []byte `json:"public"`
+// serverFile is the server's identity and cluster's ip range, stored in server.json
+type serverFile struct {
+	Private []byte       `json:"private"`
+	Public  []byte       `json:"public"`
+	CIDR    netip.Prefix `json:"cidr"`
 }
 
-func initServer(dataDir, addr string) error {
+func initServer(dataDir, addr, cidr string) error {
+	prefix, err := parseCIDR(cidr)
+	if err != nil {
+		return err
+	}
+
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
 
-	key, err := writeServerKey(dataDir)
+	sf, err := writeServerFile(dataDir, prefix)
 	if err != nil {
 		return err
 	}
-	adminPublic, err := writeAdminCredentials(dataDir, addr, key.Public)
+	adminPublic, err := writeAdminCredentials(dataDir, addr, sf.Public)
 	if err != nil {
 		return err
 	}
@@ -66,30 +74,51 @@ func initServer(dataDir, addr string) error {
 	return nil
 }
 
-func writeServerKey(dataDir string) (noise.DHKey, error) {
+// parseCIDR checks that s is an ipv4 range bigger than a /24, written
+// from its first address, like 10.100.0.0/16.
+func parseCIDR(s string) (netip.Prefix, error) {
+	p, err := netip.ParsePrefix(s)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("invalid cidr %q, use something like 10.100.0.0/16", s)
+	}
+	if !p.Addr().Is4() {
+		return netip.Prefix{}, fmt.Errorf("cidr %s: only ipv4 for now", s)
+	}
+	// each node takes a /24, so the cluster must fit at least two
+	if p.Bits() >= 24 {
+		return netip.Prefix{}, fmt.Errorf("cidr %s is too small: each node takes a /24, use a /23 or bigger, like /16", s)
+	}
+	if p != p.Masked() {
+		return netip.Prefix{}, fmt.Errorf("cidr %s does not start at the range's first address, did you mean %s?", s, p.Masked())
+	}
+	return p, nil
+}
+
+func writeServerFile(dataDir string, cidr netip.Prefix) (serverFile, error) {
 	key, err := noiseconn.GenerateKey()
 	if err != nil {
-		return noise.DHKey{}, err
+		return serverFile{}, err
 	}
-	data, err := json.MarshalIndent(keyFile{Private: key.Private, Public: key.Public}, "", "  ")
+	sf := serverFile{Private: key.Private, Public: key.Public, CIDR: cidr}
+	data, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
-		return noise.DHKey{}, err
+		return serverFile{}, err
 	}
 
-	keyPath := filepath.Join(dataDir, "server.json")
-	f, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	path := filepath.Join(dataDir, "server.json")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, fs.ErrExist) {
-		return noise.DHKey{}, fmt.Errorf("%s exists", keyPath)
+		return serverFile{}, fmt.Errorf("%s exists", path)
 	}
 	if err != nil {
-		return noise.DHKey{}, err
+		return serverFile{}, err
 	}
 	defer f.Close()
 
 	if _, err := f.Write(data); err != nil {
-		return noise.DHKey{}, err
+		return serverFile{}, err
 	}
-	return key, nil
+	return sf, nil
 }
 
 func writeAdminCredentials(dataDir, addr string, serverPublic []byte) ([]byte, error) {
