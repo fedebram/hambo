@@ -68,3 +68,18 @@ func (s *Store) ListNodes(ctx context.Context) ([]Client, error) {
 	}
 	return nodes, rows.Err()
 }
+
+// RemoveNode deletes the worker with this name and returns its public key.
+// found is false if there is no such worker.
+func (s *Store) RemoveNode(ctx context.Context, name string) (pub []byte, found bool, err error) {
+	err = s.write.QueryRowContext(ctx,
+		"DELETE FROM clients WHERE name = ? AND role = ? RETURNING public_key",
+		name, RoleWorker).Scan(&pub)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return pub, true, nil
+}

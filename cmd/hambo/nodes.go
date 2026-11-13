@@ -16,8 +16,40 @@ func nodesCmd() *cobra.Command {
 		Use:   "nodes",
 		Short: "Manage nodes",
 	}
-	cmd.AddCommand(nodesListCmd())
+	cmd.AddCommand(nodesListCmd(), nodesRemoveCmd())
 	return cmd
+}
+
+func nodesRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <name>",
+		Short: "Remove a node: it can't connect again without a new token",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runNodesRemove(configPath, args[0])
+		},
+	}
+}
+
+// runNodesRemove asks the server to remove the node with this name.
+func runNodesRemove(configPath, name string) error {
+	creds, err := loadCredentials(configPath)
+	if err != nil {
+		return err
+	}
+
+	sess, err := connect(creds)
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+
+	var answer string
+	if err := rpc.Call(sess, "nodes.remove", name, &answer); err != nil {
+		return err
+	}
+	fmt.Println(answer, name)
+	return nil
 }
 
 func nodesListCmd() *cobra.Command {

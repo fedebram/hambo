@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fedebram/hambo/internal/api"
+	"github.com/fedebram/hambo/internal/muxer"
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/store"
 	"github.com/fedebram/hambo/internal/transport"
@@ -104,6 +105,24 @@ func runServer(dataDir, listen string) error {
 		}
 		return s.Send(nodes)
 	}))
+	r.Handle("nodes.remove", adminOnly(func(ctx context.Context, s *rpc.Stream) error {
+		var name string
+		if err := s.Recv(&name); err != nil {
+			return err
+		}
+		pub, found, err := st.RemoveNode(ctx, name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return rpc.Errorf("no node named %s", name)
+		}
+		if sess := reg.get(pub); sess != nil {
+			sess.Close()
+		}
+		fmt.Println("node removed:", name)
+		return s.Send("removed")
+	}))
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -148,11 +167,28 @@ func serveConn(conn net.Conn, key noise.DHKey, st *store.Store, reg *registry, r
 		time.AfterFunc(unknownTimeout, func() { sess.Close() })
 	}
 	if p.Role == store.RoleWorker {
-		reg.add(pub, sess)
+		if !addWorker(ctx, st, reg, pub, sess) {
+			return // removed while connecting
+		}
 		defer reg.remove(pub, sess)
 	}
 
 	r.Serve(withPeer(ctx, p), sess)
+}
+
+// addWorker puts the worker in the registry. It reports false if the
+// worker was removed while it was connecting.
+func addWorker(ctx context.Context, st *store.Store, reg *registry, pub []byte, sess *muxer.Session) bool {
+	reg.add(pub, sess)
+	// nodes.remove can delete the node between the role check in serveConn
+	// and adding the worker to the registry.
+	// we check the role again to see if it was deleted.
+	role, err := st.Role(ctx, pub)
+	if err != nil || role != store.RoleWorker {
+		reg.remove(pub, sess)
+		return false
+	}
+	return true
 }
 
 // workerName gives a worker a short readable name from its public key,
