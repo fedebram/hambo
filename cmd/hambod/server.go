@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -10,10 +11,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
-	"github.com/fedebram/hambo/internal/noiseconn"
 	"github.com/fedebram/hambo/internal/rpc"
-	"github.com/fedebram/hambo/muxer"
+	"github.com/fedebram/hambo/internal/transport"
 	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
 )
@@ -51,18 +52,21 @@ func runServer(dataDir, listen string) error {
 		return err
 	}
 
+	adminOnly := requireRole(roleAdmin)
+	anyone := requireRole(roleAdmin, roleWorker)
+
 	// the methods clients can call
 	r := rpc.NewRouter()
-	r.Handle("ping", func(s *rpc.Stream) error {
+	r.Handle("ping", anyone(func(ctx context.Context, s *rpc.Stream) error {
 		return s.Send("pong")
-	})
-	r.Handle("tokens.create", func(s *rpc.Stream) error {
+	}))
+	r.Handle("tokens.create", adminOnly(func(ctx context.Context, s *rpc.Stream) error {
 		id, secret, err := tokens.create()
 		if err != nil {
 			return err
 		}
 		return s.Send(joinToken(key.Public, id, secret))
-	})
+	}))
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -76,52 +80,28 @@ func runServer(dataDir, listen string) error {
 		if err != nil {
 			return err
 		}
-		go serveConn(conn, key, clients, tokens, r)
+		go serveConn(conn, key, clients, r)
 	}
 }
 
-// serveConn secures one connection and serves rpc on it until it ends.
-// If the client joined with a token, it is registered first.
-func serveConn(conn net.Conn, key noise.DHKey, clients *clientStore, tokens *tokenStore, r *rpc.Router) {
-	nc, peer, err := noiseconn.Server(conn, key, clients.allowed, tokens.lookup)
+// how long an unknown key may stay connected: enough to call join
+const unknownTimeout = 30 * time.Second
+
+// serveConn runs the handshake and serves rpc until the session ends.
+func serveConn(conn net.Conn, key noise.DHKey, clients *clientStore, r *rpc.Router) {
+	sess, pub, err := transport.Accept(conn, key)
 	if err != nil {
 		fmt.Println("handshake failed:", conn.RemoteAddr(), err)
-		conn.Close()
 		return
 	}
-
-	// a new worker joined with a token: register it before serving
-	if peer.TokenID != nil {
-		if err := registerWorker(clients, tokens, peer); err != nil {
-			fmt.Println("join failed:", conn.RemoteAddr(), err)
-			nc.Close()
-			return
-		}
-	}
-
-	sess := muxer.Server(nc)
 	defer sess.Close()
 
-	r.Serve(sess)
-}
-
-// registerWorker uses up the token a worker joined with,
-// then adds the worker's key to the allowlist.
-func registerWorker(clients *clientStore, tokens *tokenStore, peer noiseconn.Peer) error {
-	ok, err := tokens.consume(peer.TokenID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errors.New("token already used")
+	p := peer{PubKey: pub, Role: clients.role(pub)}
+	if p.Role == roleUnknown {
+		time.AfterFunc(unknownTimeout, func() { sess.Close() })
 	}
 
-	name := workerName(peer.Public)
-	if err := clients.add(name, peer.Public); err != nil {
-		return err
-	}
-	fmt.Println("worker joined:", name)
-	return nil
+	r.Serve(withPeer(context.Background(), p), sess)
 }
 
 // workerName gives a worker a short readable name from its public key,

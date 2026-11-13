@@ -21,17 +21,6 @@ type credentials struct {
 	ClientPublic  []byte `json:"client_public"`
 }
 
-// allowlist is the list of clients the server accepts.
-type allowlist struct {
-	Clients []client `json:"clients"`
-}
-
-// client is one allowed client: a name and its public key.
-type client struct {
-	Name   string `json:"name"`
-	Public []byte `json:"public"`
-}
-
 func initCmd() *cobra.Command {
 	var dataDir string
 	var addr string
@@ -67,7 +56,7 @@ func initServer(dataDir, addr string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAllowlist(dataDir, adminPublic); err != nil {
+	if err := writeClientsFile(dataDir, adminPublic); err != nil {
 		return err
 	}
 
@@ -135,10 +124,10 @@ func writeAdminCredentials(dataDir, addr string, serverPublic []byte) ([]byte, e
 	return admin.Public, nil
 }
 
-func writeAllowlist(dataDir string, adminPublic []byte) error {
-	list := allowlist{
+func writeClientsFile(dataDir string, adminPublic []byte) error {
+	list := clientsFile{
 		Clients: []client{
-			{Name: "admin", Public: adminPublic},
+			{Name: "admin", Public: adminPublic, Role: roleAdmin},
 		},
 	}
 	data, err := json.MarshalIndent(list, "", "  ")
