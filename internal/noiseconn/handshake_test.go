@@ -9,47 +9,44 @@ import (
 	"github.com/flynn/noise"
 )
 
+func mustKey(t *testing.T) noise.DHKey {
+	t.Helper()
+	key, err := GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
 func TestHandshake(t *testing.T) {
-	clientKey, err := GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverKey, err := GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	clientKey, serverKey := mustKey(t), mustKey(t)
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 	defer serverConn.Close()
-	allowAll := func([]byte) bool { return true }
-	noTokens := func([]byte) []byte { return nil }
 
 	type server struct {
 		send, recv *noise.CipherState
-		peer       Peer
+		peer       []byte
 		err        error
 	}
 	done := make(chan server, 1)
 	go func() {
-		send, recv, peer, err := serverHandshake(serverConn, serverKey, allowAll, noTokens)
+		send, recv, peer, err := serverHandshake(serverConn, serverKey)
 		done <- server{send, recv, peer, err}
 	}()
 
-	send, recv, err := clientHandshake(clientConn, clientKey, serverKey.Public, nil, nil)
+	send, recv, err := clientHandshake(clientConn, clientKey, serverKey.Public)
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}
-
 	srv := <-done
 	if srv.err != nil {
 		t.Fatalf("server: %v", srv.err)
 	}
 
-	if !bytes.Equal(srv.peer.Public, clientKey.Public) {
+	// the server learned who the client is
+	if !bytes.Equal(srv.peer, clientKey.Public) {
 		t.Fatal("server got the wrong client key")
-	}
-	if srv.peer.TokenID != nil {
-		t.Fatal("a normal connect should have no token")
 	}
 
 	// client -> server
@@ -73,132 +70,61 @@ func TestHandshake(t *testing.T) {
 	}
 }
 
-func TestHandshakeNotAllowed(t *testing.T) {
-	clientKey, err := GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverKey, err := GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+// The client expects a different server key: like talking to a fake server.
+func TestHandshakeWrongServerKey(t *testing.T) {
+	clientKey, serverKey, otherKey := mustKey(t), mustKey(t), mustKey(t)
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 	defer serverConn.Close()
-	denyAll := func([]byte) bool { return false }
-	noTokens := func([]byte) []byte { return nil }
 
-	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := serverHandshake(serverConn, serverKey, denyAll, noTokens)
-		if err != nil {
-			// we drop the connection if the handshake fails
-			serverConn.Close()
-		}
-		done <- err
+		serverHandshake(serverConn, serverKey)
+		serverConn.Close() // a failed handshake drops the connection
 	}()
 
-	_, _, err = clientHandshake(clientConn, clientKey, serverKey.Public, nil, nil)
+	_, _, err := clientHandshake(clientConn, clientKey, otherKey.Public)
 	if err == nil {
-		t.Fatal("client should fail when the server rejects it")
-	}
-
-	// deny all -> the client is not allowed
-	if err := <-done; !errors.Is(err, ErrNotAllowed) {
-		t.Fatalf("server: got %v, want ErrNotAllowed", err)
+		t.Fatal("client should fail when the server's key is not the one it expects")
 	}
 }
 
-func TestHandshakeJoin(t *testing.T) {
-	clientKey, err := GenerateKey()
+// Someone replays a real client's first message. They can't send the
+// confirm, because they don't have the client's session keys.
+func TestHandshakeReplayedMsg1(t *testing.T) {
+	clientKey, serverKey := mustKey(t), mustKey(t)
+
+	// the first message a real client sends, as an attacker could record it
+	hs, err := newHandshake(true, clientKey, serverKey.Public)
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverKey, err := GenerateKey()
+	msg1, _, _, err := hs.WriteMessage(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
+
+	attackerConn, serverConn := net.Pipe()
+	defer attackerConn.Close()
 	defer serverConn.Close()
-
-	// the client is not on the allowlist: only its token can let it in
-	denyAll := func([]byte) bool { return false }
-
-	// the server knows one token
-	tokenID := []byte{1, 2, 3, 4, 5, 6}
-	secret := bytes.Repeat([]byte{7}, 32)
-	joinSecret := func(id []byte) []byte {
-		if bytes.Equal(id, tokenID) {
-			return secret
-		}
-		return nil
-	}
-
-	type server struct {
-		peer Peer
-		err  error
-	}
-	done := make(chan server, 1)
-	go func() {
-		_, _, peer, err := serverHandshake(serverConn, serverKey, denyAll, joinSecret)
-		done <- server{peer, err}
-	}()
-
-	_, _, err = clientHandshake(clientConn, clientKey, serverKey.Public, tokenID, secret)
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
-
-	srv := <-done
-	if srv.err != nil {
-		t.Fatalf("server: %v", srv.err)
-	}
-	// the server learned who joined, and with which token
-	if !bytes.Equal(srv.peer.Public, clientKey.Public) {
-		t.Fatal("server got the wrong client key")
-	}
-	if !bytes.Equal(srv.peer.TokenID, tokenID) {
-		t.Fatalf("token id: got %v, want %v", srv.peer.TokenID, tokenID)
-	}
-}
-
-func TestHandshakeJoinWrongSecret(t *testing.T) {
-	clientKey, err := GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverKey, err := GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
-
-	denyAll := func([]byte) bool { return false }
-
-	// the server's secret for this token is different from the client's
-	tokenID := []byte{1, 2, 3, 4, 5, 6}
-	joinSecret := func(id []byte) []byte {
-		return bytes.Repeat([]byte{7}, 32)
-	}
 
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := serverHandshake(serverConn, serverKey, denyAll, joinSecret)
-		if err != nil {
-			serverConn.Close()
-		}
+		_, _, _, err := serverHandshake(serverConn, serverKey)
 		done <- err
 	}()
 
-	wrong := bytes.Repeat([]byte{9}, 32)
-	_, _, err = clientHandshake(clientConn, clientKey, serverKey.Public, tokenID, wrong)
-	if err == nil {
-		t.Fatal("client should fail with the wrong secret")
+	// the attacker replays msg1, reads msg2, and has to make up a confirm
+	if err := writeMsg(attackerConn, msg1); err != nil {
+		t.Fatal(err)
 	}
-	if err := <-done; err == nil {
-		t.Fatal("server should reject the wrong secret")
+	if _, err := readMsg(attackerConn); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMsg(attackerConn, make([]byte, tagLen)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := <-done; !errors.Is(err, ErrNotConfirmed) {
+		t.Fatalf("server: got %v, want ErrNotConfirmed", err)
 	}
 }
