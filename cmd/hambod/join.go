@@ -13,6 +13,7 @@ import (
 	"github.com/fedebram/hambo/internal/noiseconn"
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/transport"
+	"github.com/fedebram/hambo/internal/wireguard"
 	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,8 @@ type workerFile struct {
 	ServerPublic []byte `json:"server_public"`
 	Private      []byte `json:"private"`
 	Public       []byte `json:"public"`
+	WGPrivate    []byte `json:"wg_private"`
+	WGPublic     []byte `json:"wg_public"`
 }
 
 func joinCmd() *cobra.Command {
@@ -105,6 +108,13 @@ func loadOrCreateWorker(dataDir, server string, serverPublic []byte) (workerFile
 		w.Public = key.Public
 	default:
 		return workerFile{}, err
+	}
+
+	if w.WGPrivate == nil {
+		w.WGPrivate, w.WGPublic, err = wireguard.NewKey()
+		if err != nil {
+			return workerFile{}, err
+		}
 	}
 
 	w.Server = server

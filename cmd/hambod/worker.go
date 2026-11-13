@@ -12,6 +12,7 @@ import (
 
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/transport"
+	"github.com/fedebram/hambo/internal/wireguard"
 	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
 )
@@ -38,6 +39,10 @@ func runWorker(dataDir string) error {
 		return err
 	}
 	key := noise.DHKey{Private: w.Private, Public: w.Public}
+
+	if err := wireguard.Up(w.WGPrivate); err != nil {
+		return fmt.Errorf("wireguard (needs root): %w\nif the key is missing, run hambod join again", err)
+	}
 
 	// the methods the server can call on this worker
 	r := rpc.NewRouter()

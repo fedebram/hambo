@@ -2,6 +2,7 @@ package wireguard
 
 import (
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/vishvananda/netlink"
@@ -9,10 +10,30 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-// Setup creates and brings up the wg0 interface. If it already exists, it does nothing.
-func Setup(key wgtypes.Key) error {
-	link := &netlink.Wireguard{Name: "wg0"}
-	err := netlink.LinkAdd(link)
+const (
+	iface = "wg0"
+	port  = 51820
+)
+
+// NewKey creates a new wireguard keypair.
+func NewKey() (private, public []byte, err error) {
+	key, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		return nil, nil, err
+	}
+	pub := key.PublicKey()
+	return key[:], pub[:], nil
+}
+
+// Up creates wg0 if it doesn't exist.
+func Up(private []byte) error {
+	key, err := wgtypes.NewKey(private)
+	if err != nil {
+		return fmt.Errorf("bad wireguard key: %w", err)
+	}
+
+	link := &netlink.Wireguard{Name: iface}
+	err = netlink.LinkAdd(link)
 	if err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
@@ -23,11 +44,10 @@ func Setup(key wgtypes.Key) error {
 	}
 	defer c.Close()
 
-	port := 51820
-
-	err = c.ConfigureDevice("wg0", wgtypes.Config{
+	listen := port
+	err = c.ConfigureDevice(iface, wgtypes.Config{
 		PrivateKey: &key,
-		ListenPort: &port,
+		ListenPort: &listen,
 	})
 	if err != nil {
 		return err
