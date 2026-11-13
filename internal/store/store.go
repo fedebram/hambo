@@ -2,10 +2,14 @@ package store
 
 import (
 	"database/sql"
+	_ "embed"
 	"errors"
 
 	_ "modernc.org/sqlite"
 )
+
+//go:embed schema.sql
+var schema string
 
 type Store struct {
 	write *sql.DB
@@ -26,6 +30,10 @@ func Open(path string) (*Store, error) {
 	write.SetMaxOpenConns(1)
 	// the first connection creates the file and turns on WAL
 	if err := write.Ping(); err != nil {
+		write.Close()
+		return nil, err
+	}
+	if _, err := write.Exec(schema); err != nil {
 		write.Close()
 		return nil, err
 	}
