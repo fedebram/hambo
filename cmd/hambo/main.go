@@ -24,7 +24,7 @@ func main() {
 	}
 	root.PersistentFlags().StringVar(&configPath, "config", "./data/admin.json", "the credentials file")
 
-	root.AddCommand(pingCmd(), tokenCmd())
+	root.AddCommand(pingCmd(), tokenCmd(), nodesCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

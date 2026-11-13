@@ -50,6 +50,8 @@ func runServer(dataDir, listen string) error {
 	}
 	defer st.Close()
 
+	reg := newRegistry()
+
 	adminOnly := requireRole(store.RoleAdmin)
 	anyone := requireRole(store.RoleAdmin, store.RoleWorker)
 
@@ -86,6 +88,22 @@ func runServer(dataDir, listen string) error {
 		fmt.Println("worker joined:", name)
 		return s.Send("joined")
 	}))
+	r.Handle("nodes.list", adminOnly(func(ctx context.Context, s *rpc.Stream) error {
+		clients, err := st.ListNodes(ctx)
+		if err != nil {
+			return err
+		}
+		nodes := []api.Node{}
+		for _, c := range clients {
+			nodes = append(nodes, api.Node{
+				Name:      c.Name,
+				Role:      string(c.Role),
+				Connected: reg.get(c.PublicKey) != nil,
+				JoinedAt:  c.CreatedAt,
+			})
+		}
+		return s.Send(nodes)
+	}))
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -94,7 +112,6 @@ func runServer(dataDir, listen string) error {
 	defer ln.Close()
 	fmt.Println("listening on", ln.Addr())
 
-	reg := newRegistry()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
