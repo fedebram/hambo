@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fedebram/hambo/internal/rpc"
+	"github.com/fedebram/hambo/internal/store"
 	"github.com/fedebram/hambo/internal/transport"
 	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
@@ -42,18 +43,14 @@ func runServer(dataDir, listen string) error {
 	}
 	fmt.Println("server public key:", base64.StdEncoding.EncodeToString(key.Public))
 
-	clients, err := loadClients(dataDir)
+	st, err := store.Open(filepath.Join(dataDir, "hambo.db"))
 	if err != nil {
 		return err
 	}
+	defer st.Close()
 
-	tokens, err := loadTokens(dataDir)
-	if err != nil {
-		return err
-	}
-
-	adminOnly := requireRole(roleAdmin)
-	anyone := requireRole(roleAdmin, roleWorker)
+	adminOnly := requireRole(store.RoleAdmin)
+	anyone := requireRole(store.RoleAdmin, store.RoleWorker)
 
 	// the methods clients can call
 	r := rpc.NewRouter()
@@ -61,15 +58,15 @@ func runServer(dataDir, listen string) error {
 		return s.Send("pong")
 	}))
 	r.Handle("tokens.create", adminOnly(func(ctx context.Context, s *rpc.Stream) error {
-		id, secret, err := tokens.create()
+		id, secret, err := st.CreateToken(ctx, tokenTTL)
 		if err != nil {
 			return err
 		}
 		return s.Send(joinToken(key.Public, id, secret))
 	}))
-	r.Handle("join", requireRole(roleUnknown, roleWorker)(func(ctx context.Context, s *rpc.Stream) error {
+	r.Handle("join", requireRole(store.RoleUnknown, store.RoleWorker)(func(ctx context.Context, s *rpc.Stream) error {
 		p := peerFrom(ctx)
-		if p.Role == roleWorker {
+		if p.Role == store.RoleWorker {
 			return s.Send("already joined")
 		}
 
@@ -77,17 +74,13 @@ func runServer(dataDir, listen string) error {
 		if err := s.Recv(&req); err != nil {
 			return err
 		}
-		ok, err := tokens.consume(req.ID, req.Secret)
+		name := workerName(p.PubKey)
+		ok, err := st.Join(ctx, req.ID, req.Secret, store.Client{PublicKey: p.PubKey, Name: name, Role: store.RoleWorker})
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return rpc.Errorf("invalid or used token")
-		}
-
-		name := workerName(p.PubKey)
-		if err := clients.add(client{Name: name, Public: p.PubKey, Role: roleWorker}); err != nil {
-			return err
 		}
 		fmt.Println("worker joined:", name)
 		return s.Send("joined")
@@ -105,15 +98,19 @@ func runServer(dataDir, listen string) error {
 		if err != nil {
 			return err
 		}
-		go serveConn(conn, key, clients, r)
+		go serveConn(conn, key, st, r)
 	}
 }
 
-// how long an unknown key may stay connected: enough to call join
-const unknownTimeout = 30 * time.Second
+const (
+	// how long an unknown key may stay connected: enough to call join
+	unknownTimeout = 30 * time.Second
+	// how long a join token stays valid
+	tokenTTL = 24 * time.Hour
+)
 
 // serveConn runs the handshake and serves rpc until the session ends.
-func serveConn(conn net.Conn, key noise.DHKey, clients *clientStore, r *rpc.Router) {
+func serveConn(conn net.Conn, key noise.DHKey, st *store.Store, r *rpc.Router) {
 	sess, pub, err := transport.Accept(conn, key)
 	if err != nil {
 		fmt.Println("handshake failed:", conn.RemoteAddr(), err)
@@ -121,12 +118,18 @@ func serveConn(conn net.Conn, key noise.DHKey, clients *clientStore, r *rpc.Rout
 	}
 	defer sess.Close()
 
-	p := peer{PubKey: pub, Role: clients.role(pub)}
-	if p.Role == roleUnknown {
+	ctx := context.Background()
+	role, err := st.Role(ctx, pub)
+	if err != nil {
+		fmt.Println("role lookup failed:", conn.RemoteAddr(), err)
+		return
+	}
+	p := peer{PubKey: pub, Role: role}
+	if p.Role == store.RoleUnknown {
 		time.AfterFunc(unknownTimeout, func() { sess.Close() })
 	}
 
-	r.Serve(withPeer(context.Background(), p), sess)
+	r.Serve(withPeer(ctx, p), sess)
 }
 
 // workerName gives a worker a short readable name from its public key,

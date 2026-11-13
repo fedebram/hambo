@@ -5,12 +5,13 @@ import (
 	"slices"
 
 	"github.com/fedebram/hambo/internal/rpc"
+	"github.com/fedebram/hambo/internal/store"
 )
 
 // peer is the client of a session: its public key and its role.
 type peer struct {
 	PubKey []byte // verified by the handshake
-	Role   role
+	Role   store.Role
 }
 
 type peerKey struct{}
@@ -28,7 +29,7 @@ func peerFrom(ctx context.Context) peer {
 
 // requireRole lets through only callers with one of these roles.
 // The others get "unknown method".
-func requireRole(roles ...role) func(rpc.Handler) rpc.Handler {
+func requireRole(roles ...store.Role) func(rpc.Handler) rpc.Handler {
 	return func(next rpc.Handler) rpc.Handler {
 		return func(ctx context.Context, s *rpc.Stream) error {
 			if !slices.Contains(roles, peerFrom(ctx).Role) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/fedebram/hambo/internal/noiseconn"
+	"github.com/fedebram/hambo/internal/store"
 	"github.com/flynn/noise"
 	"github.com/spf13/cobra"
 )
@@ -56,7 +58,7 @@ func initServer(dataDir, addr string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeClientsFile(dataDir, adminPublic); err != nil {
+	if err := addAdmin(dataDir, adminPublic); err != nil {
 		return err
 	}
 
@@ -124,29 +126,13 @@ func writeAdminCredentials(dataDir, addr string, serverPublic []byte) ([]byte, e
 	return admin.Public, nil
 }
 
-func writeClientsFile(dataDir string, adminPublic []byte) error {
-	list := clientsFile{
-		Clients: []client{
-			{Name: "admin", Public: adminPublic, Role: roleAdmin},
-		},
-	}
-	data, err := json.MarshalIndent(list, "", "  ")
+// addAdmin creates the sqlite db and puts the admin in it.
+func addAdmin(dataDir string, adminPublic []byte) error {
+	st, err := store.Open(filepath.Join(dataDir, "hambo.db"))
 	if err != nil {
 		return err
 	}
+	defer st.Close()
 
-	path := filepath.Join(dataDir, "clients.json")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		return fmt.Errorf("already initialized: %s exists", path)
-	}
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	if _, err := f.Write(data); err != nil {
-		return err
-	}
-	return nil
+	return st.AddClient(context.Background(), store.Client{PublicKey: adminPublic, Name: "admin", Role: store.RoleAdmin})
 }
