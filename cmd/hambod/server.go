@@ -93,12 +93,13 @@ func runServer(dataDir, listen string) error {
 	defer ln.Close()
 	fmt.Println("listening on", ln.Addr())
 
+	reg := newRegistry()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-		go serveConn(conn, key, st, r)
+		go serveConn(conn, key, st, reg, r)
 	}
 }
 
@@ -110,7 +111,7 @@ const (
 )
 
 // serveConn runs the handshake and serves rpc until the session ends.
-func serveConn(conn net.Conn, key noise.DHKey, st *store.Store, r *rpc.Router) {
+func serveConn(conn net.Conn, key noise.DHKey, st *store.Store, reg *registry, r *rpc.Router) {
 	sess, pub, err := transport.Accept(conn, key)
 	if err != nil {
 		fmt.Println("handshake failed:", conn.RemoteAddr(), err)
@@ -127,6 +128,10 @@ func serveConn(conn net.Conn, key noise.DHKey, st *store.Store, r *rpc.Router) {
 	p := peer{PubKey: pub, Role: role}
 	if p.Role == store.RoleUnknown {
 		time.AfterFunc(unknownTimeout, func() { sess.Close() })
+	}
+	if p.Role == store.RoleWorker {
+		reg.add(pub, sess)
+		defer reg.remove(pub, sess)
 	}
 
 	r.Serve(withPeer(ctx, p), sess)
