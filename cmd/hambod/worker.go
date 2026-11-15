@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/fedebram/hambo/internal/api"
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/transport"
 	"github.com/fedebram/hambo/internal/wireguard"
@@ -47,6 +48,22 @@ func runWorker(dataDir string) error {
 	// the methods the server can call on this worker
 	r := rpc.NewRouter()
 	r.Handle("health", func(ctx context.Context, s *rpc.Stream) error {
+		return s.Send("ok")
+	})
+	r.Handle("wg.config", func(ctx context.Context, s *rpc.Stream) error {
+		var cfg api.WGConfig
+		if err := s.Recv(&cfg); err != nil {
+			return err
+		}
+		if err := wireguard.Up(w.WGPrivate); err != nil {
+			fmt.Println("wg config:", err)
+			return rpc.Errorf("wg0 up: %v", err)
+		}
+		if err := wireguard.SetAddress(cfg.Subnet, cfg.Cluster); err != nil {
+			fmt.Println("wg config:", err)
+			return rpc.Errorf("set wg0 address: %v", err)
+		}
+		fmt.Println("subnet:", cfg.Subnet)
 		return s.Send("ok")
 	})
 

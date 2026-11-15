@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/fedebram/hambo/internal/api"
+	"github.com/fedebram/hambo/internal/muxer"
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/store"
 	"github.com/fedebram/hambo/internal/transport"
@@ -143,7 +145,7 @@ func runServer(dataDir, listen string) error {
 		if err != nil {
 			return err
 		}
-		go serveConn(conn, key, st, reg, r)
+		go serveConn(conn, key, sf.CIDR, st, reg, r)
 	}
 }
 
@@ -155,7 +157,7 @@ const (
 )
 
 // serveConn runs the handshake and serves rpc until the session ends.
-func serveConn(conn net.Conn, key noise.DHKey, st *store.Store, reg *registry, r *rpc.Router) {
+func serveConn(conn net.Conn, key noise.DHKey, cluster netip.Prefix, st *store.Store, reg *registry, r *rpc.Router) {
 	sess, pub, err := transport.Accept(conn, key)
 	if err != nil {
 		fmt.Println("handshake failed:", conn.RemoteAddr(), err)
@@ -178,9 +180,26 @@ func serveConn(conn net.Conn, key noise.DHKey, st *store.Store, reg *registry, r
 			return
 		}
 		defer reg.removeSession(pub, sess)
+		go sendWGConfig(ctx, st, cluster, pub, sess)
 	}
 
 	r.Serve(withPeer(ctx, p), sess)
+}
+
+// sendWGConfig sends the node its subnet and the cluster range.
+func sendWGConfig(ctx context.Context, st *store.Store, cluster netip.Prefix, pub []byte, sess *muxer.Session) {
+	subnet, err := st.Subnet(ctx, pub)
+	if err != nil {
+		fmt.Println("wg config:", workerName(pub), err)
+		return
+	}
+
+	cfg := api.WGConfig{Subnet: subnet, Cluster: cluster}
+	var answer string
+	if err := rpc.Call(sess, "wg.config", cfg, &answer); err != nil {
+		fmt.Println("wg config:", workerName(pub), err)
+		sess.Close()
+	}
 }
 
 // workerName gives a worker a short readable name from its public key,

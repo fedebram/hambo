@@ -46,3 +46,15 @@ func freeSubnet(cidr netip.Prefix, taken map[string]bool) (netip.Prefix, error) 
 	}
 	return netip.Prefix{}, ErrNoFreeSubnet
 }
+
+// Subnet returns the subnet of the worker with this public key.
+func (s *Store) Subnet(ctx context.Context, pub []byte) (netip.Prefix, error) {
+	var subnet string
+	err := s.read.QueryRowContext(ctx,
+		"SELECT subnet FROM clients WHERE public_key = ? AND role = ?",
+		pub, RoleWorker).Scan(&subnet)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.ParsePrefix(subnet)
+}

@@ -1,6 +1,9 @@
 package api
 
-import "time"
+import (
+	"net/netip"
+	"time"
+)
 
 // JoinRequest is what a new worker sends to join.
 type JoinRequest struct {
@@ -16,4 +19,10 @@ type Node struct {
 	Connected bool      `json:"connected"`
 	Subnet    string    `json:"subnet"`
 	JoinedAt  time.Time `json:"joined_at"`
+}
+
+// WGConfig is the WireGuard config the server sends to a worker.
+type WGConfig struct {
+	Subnet  netip.Prefix `json:"subnet"`  // the node's subnet, like 10.100.1.0/24
+	Cluster netip.Prefix `json:"cluster"` // the cluster's range, like 10.100.0.0/16
 }
