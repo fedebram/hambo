@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// WGPort is the UDP port wg0 listens on, on every node.
+const WGPort = 51820
+
 // JoinRequest is what a new worker sends to join.
 type JoinRequest struct {
 	ID       []byte `json:"id"`
@@ -25,4 +28,12 @@ type Node struct {
 type WGConfig struct {
 	Subnet      netip.Prefix `json:"subnet"`       // the node's subnet, like 10.100.1.0/24
 	ClusterCIDR netip.Prefix `json:"cluster_cidr"` // the cluster's range, like 10.100.0.0/16
+	Peers       []WGPeer     `json:"peers"`        // the other nodes
+}
+
+// WGPeer is another node of the cluster.
+type WGPeer struct {
+	PublicKey []byte         `json:"public_key"` // its wireguard public key
+	Endpoint  netip.AddrPort `json:"endpoint"`   // where its wg0 listens, like 192.168.1.20:51820
+	Subnet    netip.Prefix   `json:"subnet"`     // its subnet, like 10.100.2.0/24
 }

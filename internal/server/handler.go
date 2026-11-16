@@ -96,17 +96,17 @@ func (s *Server) removeNode(ctx context.Context, stream *rpc.Stream) error {
 	if err := stream.Recv(&name); err != nil {
 		return err
 	}
-	pub, found, err := s.st.RemoveNode(ctx, name)
+	_, found, err := s.st.RemoveNode(ctx, name)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return rpc.Errorf("no node named %s", name)
 	}
-	if sess := s.reg.get(pub); sess != nil {
-		sess.Close()
-	}
 	fmt.Println("node removed:", name)
+	// we update all nodes: the update closes its session,
+	// and the others drop it from their peers.
+	s.updateAllNodes()
 	return stream.Send("removed")
 }
 

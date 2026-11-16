@@ -5,7 +5,9 @@ CREATE TABLE IF NOT EXISTS clients (
 	created_at INTEGER NOT NULL,
 	-- only for workers, NULL for admins
 	wg_public  BLOB,
-	subnet     TEXT UNIQUE
+	subnet     TEXT UNIQUE,
+	-- NULL until the worker connects
+	endpoint   TEXT
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS tokens (

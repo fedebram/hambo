@@ -11,10 +11,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-const (
-	iface = "wg0"
-	port  = 51820
-)
+const iface = "wg0"
 
 // NewKey creates a new wireguard keypair.
 func NewKey() (private, public []byte, err error) {
@@ -26,9 +23,9 @@ func NewKey() (private, public []byte, err error) {
 	return key[:], pub[:], nil
 }
 
-// SetInterface makes sure wg0 exists and is up.
-// It changes only what is different.
-func SetInterface(private []byte) error {
+// SetInterface makes sure wg0 exists, with this private key and port,
+// and is up. It changes only what is different.
+func SetInterface(private []byte, port int) error {
 	key, err := wgtypes.NewKey(private)
 	if err != nil {
 		return fmt.Errorf("bad wireguard key: %w", err)
@@ -46,10 +43,9 @@ func SetInterface(private []byte) error {
 	}
 	defer c.Close()
 
-	listen := port
 	err = c.ConfigureDevice(iface, wgtypes.Config{
 		PrivateKey: &key,
-		ListenPort: &listen,
+		ListenPort: &port,
 	})
 	if err != nil {
 		return err

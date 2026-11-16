@@ -47,3 +47,15 @@ func (r *registry) get(pub []byte) *muxer.Session {
 func (r *registry) has(pub []byte) bool {
 	return r.get(pub) != nil
 }
+
+// connected returns the public keys of the nodes that have a session.
+func (r *registry) connected() [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var pubs [][]byte
+	for pub := range r.sessions {
+		pubs = append(pubs, []byte(pub))
+	}
+	return pubs
+}

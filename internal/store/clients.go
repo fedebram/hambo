@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/netip"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type Client struct {
 	// only for workers
 	WGPublic []byte
 	Subnet   string // like 10.100.1.0/24
+	Endpoint string // like 192.168.1.20:51820, empty until it connects
 }
 
 // Role returns the role of the client with this public key,
@@ -53,7 +55,7 @@ func (s *Store) AddClient(ctx context.Context, c Client) error {
 // ListNodes returns the workers, sorted by name.
 func (s *Store) ListNodes(ctx context.Context) ([]Client, error) {
 	rows, err := s.read.QueryContext(ctx,
-		"SELECT public_key, name, role, created_at, wg_public, subnet FROM clients WHERE role = ? ORDER BY name",
+		"SELECT public_key, name, role, created_at, wg_public, subnet, endpoint FROM clients WHERE role = ? ORDER BY name",
 		RoleWorker)
 	if err != nil {
 		return nil, err
@@ -64,13 +66,33 @@ func (s *Store) ListNodes(ctx context.Context) ([]Client, error) {
 	for rows.Next() {
 		var c Client
 		var created int64
-		if err := rows.Scan(&c.PublicKey, &c.Name, &c.Role, &created, &c.WGPublic, &c.Subnet); err != nil {
+		// the endpoint is NULL until the worker connects
+		var endpoint sql.NullString
+		if err := rows.Scan(&c.PublicKey, &c.Name, &c.Role, &created, &c.WGPublic, &c.Subnet, &endpoint); err != nil {
 			return nil, err
 		}
 		c.CreatedAt = time.Unix(created, 0)
+		c.Endpoint = endpoint.String
 		nodes = append(nodes, c)
 	}
 	return nodes, rows.Err()
+}
+
+// SetEndpoint saves the worker's endpoint. changed is true if it is
+// different from the one we had (or we had none).
+func (s *Store) SetEndpoint(ctx context.Context, pub []byte, endpoint netip.AddrPort) (changed bool, err error) {
+	// we update only if it is different, so the rows affected tell us if it changed
+	res, err := s.write.ExecContext(ctx,
+		"UPDATE clients SET endpoint = ? WHERE public_key = ? AND role = ? AND endpoint IS NOT ?",
+		endpoint.String(), pub, RoleWorker, endpoint.String())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // RemoveNode deletes the worker with this name and returns its public key.

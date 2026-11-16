@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"net/netip"
 
 	"github.com/fedebram/hambo/internal/api"
 	"github.com/fedebram/hambo/internal/rpc"
@@ -27,12 +28,29 @@ func (w *worker) wgConfig(ctx context.Context, stream *rpc.Stream) error {
 	if err := stream.Recv(&cfg); err != nil {
 		return err
 	}
-	if err := wireguard.SetInterface(w.id.WGPrivate); err != nil {
+
+	w.wgMu.Lock()
+	defer w.wgMu.Unlock()
+
+	if err := wireguard.SetInterface(w.id.WGPrivate, api.WGPort); err != nil {
 		return fmt.Errorf("set wg0: %w", err)
 	}
 	if err := wireguard.SetAddress(cfg.Subnet, cfg.ClusterCIDR); err != nil {
 		return fmt.Errorf("set wg0 address: %w", err)
 	}
-	fmt.Println("subnet:", cfg.Subnet)
+
+	var peers []wireguard.Peer
+	for _, p := range cfg.Peers {
+		peers = append(peers, wireguard.Peer{
+			PublicKey:  p.PublicKey,
+			Endpoint:   p.Endpoint,
+			AllowedIPs: []netip.Prefix{p.Subnet},
+		})
+	}
+	if err := wireguard.SetPeers(peers); err != nil {
+		return fmt.Errorf("set wg0 peers: %w", err)
+	}
+
+	fmt.Println("subnet:", cfg.Subnet, "peers:", len(peers))
 	return stream.Send("ok")
 }
