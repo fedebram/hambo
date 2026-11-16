@@ -26,8 +26,9 @@ func NewKey() (private, public []byte, err error) {
 	return key[:], pub[:], nil
 }
 
-// Up creates wg0 if it doesn't exist.
-func Up(private []byte) error {
+// SetInterface makes sure wg0 exists and is up.
+// It changes only what is different.
+func SetInterface(private []byte) error {
 	key, err := wgtypes.NewKey(private)
 	if err != nil {
 		return fmt.Errorf("bad wireguard key: %w", err)
@@ -57,8 +58,8 @@ func Up(private []byte) error {
 	return netlink.LinkSetUp(link)
 }
 
-// SetAddress gives wg0 the first address of the node's subnet, with the
-// size of the cluster.
+// SetAddress makes wg0 have exactly one address: the first address of the
+// node's subnet, with the size of the cluster.
 //
 // eg. 10.100.1.0/24 in 10.100.0.0/16 gives 10.100.1.0/16.
 func SetAddress(subnet, cluster netip.Prefix) error {
@@ -71,12 +72,17 @@ func SetAddress(subnet, cluster netip.Prefix) error {
 		return err
 	}
 
-	// remove the old addresses: for example the node rejoined the cluster
-	// and got a different subnet, but wg0 still has the old address.
 	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
 	if err != nil {
 		return err
 	}
+	// we have already set the address
+	if len(addrs) == 1 && addrs[0].Equal(*want) {
+		return nil
+	}
+
+	// remove the old addresses: for example the node rejoined the cluster
+	// and got a different subnet, but wg0 still has the old address.
 	for _, a := range addrs {
 		if a.Equal(*want) {
 			continue
