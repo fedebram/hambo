@@ -84,9 +84,14 @@ func parseCIDR(s string) (netip.Prefix, error) {
 	if !p.Addr().Is4() {
 		return netip.Prefix{}, fmt.Errorf("cidr %s: only ipv4 for now", s)
 	}
-	// each node takes a /24, so the cluster must fit at least two
-	if p.Bits() >= 24 {
-		return netip.Prefix{}, fmt.Errorf("cidr %s is too small: each node takes a /24, use a /23 or bigger, like /16", s)
+	if !p.Addr().IsPrivate() {
+		return netip.Prefix{}, fmt.Errorf("cidr %s is not a private range, use one inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16", s)
+	}
+
+	// each node takes a /24 and the first /24 is reserved,
+	// so the cluster must fit at least two nodes
+	if p.Bits() > 22 {
+		return netip.Prefix{}, fmt.Errorf("cidr %s is too small: each node takes a /24, use a /22 or bigger, like /16", s)
 	}
 	if p != p.Masked() {
 		return netip.Prefix{}, fmt.Errorf("cidr %s does not start at the range's first address, did you mean %s?", s, p.Masked())
