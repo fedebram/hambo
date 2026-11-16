@@ -59,7 +59,7 @@ func runWorker(dataDir string) error {
 			fmt.Println("wg config:", err)
 			return rpc.Errorf("wg0 up: %v", err)
 		}
-		if err := wireguard.SetAddress(cfg.Subnet, cfg.Cluster); err != nil {
+		if err := wireguard.SetAddress(cfg.Subnet, cfg.ClusterCIDR); err != nil {
 			fmt.Println("wg config:", err)
 			return rpc.Errorf("set wg0 address: %v", err)
 		}

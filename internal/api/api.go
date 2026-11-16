@@ -23,6 +23,6 @@ type Node struct {
 
 // WGConfig is the WireGuard config the server sends to a worker.
 type WGConfig struct {
-	Subnet  netip.Prefix `json:"subnet"`  // the node's subnet, like 10.100.1.0/24
-	Cluster netip.Prefix `json:"cluster"` // the cluster's range, like 10.100.0.0/16
+	Subnet      netip.Prefix `json:"subnet"`       // the node's subnet, like 10.100.1.0/24
+	ClusterCIDR netip.Prefix `json:"cluster_cidr"` // the cluster's range, like 10.100.0.0/16
 }
