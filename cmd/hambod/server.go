@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fedebram/hambo/internal/api"
+	"github.com/fedebram/hambo/internal/jointoken"
 	"github.com/fedebram/hambo/internal/muxer"
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/store"
@@ -69,7 +70,7 @@ func runServer(dataDir, listen string) error {
 		if err != nil {
 			return err
 		}
-		return s.Send(joinToken(key.Public, id, secret))
+		return s.Send(jointoken.Encode(key.Public, id, secret))
 	}))
 	r.Handle("join", requireRole(store.RoleUnknown, store.RoleWorker)(func(ctx context.Context, s *rpc.Stream) error {
 		p := peerFrom(ctx)

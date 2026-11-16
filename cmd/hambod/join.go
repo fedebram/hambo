@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/fedebram/hambo/internal/api"
+	"github.com/fedebram/hambo/internal/jointoken"
 	"github.com/fedebram/hambo/internal/noiseconn"
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/transport"
@@ -49,7 +50,7 @@ func joinCmd() *cobra.Command {
 
 // runJoin joins the server as a worker.
 func runJoin(dataDir, server, token string) error {
-	serverPublic, id, secret, err := parseJoinToken(token)
+	serverPublic, id, secret, err := jointoken.Parse(token)
 	if err != nil {
 		return err
 	}
