@@ -2,51 +2,60 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/fedebram/hambo/internal/api"
 	"github.com/fedebram/hambo/internal/rpc"
 	"github.com/fedebram/hambo/internal/store"
 )
 
-func (s *Server) runContainer(ctx context.Context, stream *rpc.Stream) error {
-	var spec api.ContainerSpec
-	if err := stream.Recv(&spec); err != nil {
-		return err
-	}
+// runContainer saves a new pending container.
+func (s *Server) runContainer(ctx context.Context, spec api.ContainerSpec) (api.Container, error) {
 	if spec.Name == "" {
-		return rpc.Errorf("the name is required")
+		return api.Container{}, rpc.Errorf("the name is required")
 	}
 	if spec.Image == "" {
-		return rpc.Errorf("the image is required")
+		return api.Container{}, rpc.Errorf("the image is required")
 	}
 
-	c, err := s.st.AddContainer(ctx, spec)
-	if errors.Is(err, store.ErrNameTaken) {
-		return rpc.Errorf("container %s already exists", spec.Name)
+	c := store.Container{ID: newContainerID(), Spec: spec, CreatedAt: time.Now()}
+	err := s.st.AddContainer(ctx, c)
+	if errors.Is(err, store.ErrConflict) {
+		return api.Container{}, rpc.Errorf("container %s already exists", spec.Name)
 	}
 	if err != nil {
-		return err
+		return api.Container{}, err
 	}
-	fmt.Println("container added:", c.Spec.Name, c.ID)
-	s.scheduleLater(c.ID)
-	return stream.Send(c)
+	fmt.Println("container added:", spec.Name, c.ID)
+	s.onContainerCreated(c.ID)
+	return api.Container{ID: c.ID, Spec: c.Spec, CreatedAt: c.CreatedAt}, nil
 }
 
-func (s *Server) listContainers(ctx context.Context, stream *rpc.Stream) error {
-	containers, err := s.st.ListContainers(ctx)
+// listContainers returns the containers, with the name of their node.
+func (s *Server) listContainers(ctx context.Context) ([]api.Container, error) {
+	stored, err := s.st.ListContainers(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return stream.Send(containers)
+
+	containers := []api.Container{}
+	for _, c := range stored {
+		containers = append(containers, api.Container{
+			ID:        c.ID,
+			Spec:      c.Spec,
+			NodeName:  c.NodeName,
+			CreatedAt: c.CreatedAt,
+		})
+	}
+	return containers, nil
 }
 
-func (s *Server) removeContainer(ctx context.Context, stream *rpc.Stream) error {
-	var name string
-	if err := stream.Recv(&name); err != nil {
-		return err
-	}
+// removeContainer deletes the container (hard delete)
+func (s *Server) removeContainer(ctx context.Context, name string) error {
 	node, found, err := s.st.RemoveContainer(ctx, name)
 	if err != nil {
 		return err
@@ -55,9 +64,12 @@ func (s *Server) removeContainer(ctx context.Context, stream *rpc.Stream) error 
 		return rpc.Errorf("no container named %s", name)
 	}
 	fmt.Println("container removed:", name)
-	// an hard delete...
-	if node != nil {
-		s.updateLater(node)
-	}
-	return stream.Send("removed")
+	s.onContainerRemoved(node)
+	return nil
+}
+
+func newContainerID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }

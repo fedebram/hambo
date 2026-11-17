@@ -18,7 +18,6 @@ type JoinRequest struct {
 // Node is one machine that joined the server.
 type Node struct {
 	Name      string    `json:"name"`
-	Role      string    `json:"role"`
 	Connected bool      `json:"connected"`
 	Subnet    string    `json:"subnet"`
 	JoinedAt  time.Time `json:"joined_at"`

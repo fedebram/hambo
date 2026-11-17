@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/fedebram/hambo/internal/noiseconn"
 	"github.com/fedebram/hambo/internal/store"
@@ -168,5 +169,5 @@ func addAdmin(dataDir string, adminPublic []byte) error {
 	}
 	defer st.Close()
 
-	return st.AddClient(context.Background(), store.Client{PublicKey: adminPublic, Name: "admin", Role: store.RoleAdmin})
+	return st.AddAdmin(context.Background(), store.Admin{PublicKey: adminPublic, Name: "admin", CreatedAt: time.Now()})
 }

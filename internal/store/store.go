@@ -5,11 +5,15 @@ import (
 	_ "embed"
 	"errors"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 //go:embed schema.sql
 var schema string
+
+// ErrConflict means a row with the same unique value already exists.
+var ErrConflict = errors.New("already exists")
 
 type Store struct {
 	write *sql.DB
@@ -53,4 +57,14 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error {
 	return errors.Join(s.read.Close(), s.write.Close())
+}
+
+// isConflict reports whether err is a UNIQUE or PRIMARY KEY failure.
+func isConflict(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code()
+	return code == sqlite3.SQLITE_CONSTRAINT_UNIQUE || code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
 }

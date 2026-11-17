@@ -1,12 +1,16 @@
-CREATE TABLE IF NOT EXISTS clients (
+CREATE TABLE IF NOT EXISTS admins (
 	public_key BLOB PRIMARY KEY,
-	name       TEXT NOT NULL,
-	role       TEXT NOT NULL,
+	name       TEXT NOT NULL UNIQUE,
+	created_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS nodes (
+	public_key BLOB PRIMARY KEY,
+	name       TEXT NOT NULL UNIQUE,
 	created_at INTEGER NOT NULL,
-	-- only for workers, NULL for admins
-	wg_public  BLOB,
-	subnet     TEXT UNIQUE,
-	-- NULL until the worker connects
+	wg_public  BLOB NOT NULL,
+	subnet     TEXT NOT NULL UNIQUE,
+	-- NULL until the node first connects
 	endpoint   TEXT
 ) STRICT;
 
@@ -21,7 +25,9 @@ CREATE TABLE IF NOT EXISTS containers (
 	name       TEXT NOT NULL UNIQUE,
 	spec       BLOB NOT NULL,
 	created_at INTEGER NOT NULL,
-	node_key   BLOB REFERENCES clients(public_key) ON DELETE CASCADE
+	-- the node it runs on, NULL while pending.
+	-- removing the node removes its containers.
+	node_key   BLOB REFERENCES nodes(public_key) ON DELETE CASCADE
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS containers_node_key ON containers(node_key);

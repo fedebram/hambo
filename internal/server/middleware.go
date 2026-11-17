@@ -8,7 +8,7 @@ import (
 	"github.com/fedebram/hambo/internal/store"
 )
 
-// caller identifies the client of an rpc call.
+// caller identifies who makes an rpc call: an admin, a node, or unknown.
 type caller struct {
 	PubKey []byte
 	Role   store.Role
@@ -28,7 +28,7 @@ func callerFrom(ctx context.Context) caller {
 }
 
 // requireRole lets through only callers that have one of these roles
-// in the store right now. The others get "unknown method".
+// in the store. The others get "unknown method".
 func (s *Server) requireRole(roles ...store.Role) func(rpc.Handler) rpc.Handler {
 	return func(next rpc.Handler) rpc.Handler {
 		return func(ctx context.Context, stream *rpc.Stream) error {
