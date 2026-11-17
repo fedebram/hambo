@@ -39,8 +39,8 @@ type WGPeer struct {
 }
 
 type ContainerSpec struct {
-	Name  string `json:"name"`
-	Image string `json:"image"`
+	Name  string `json:"name" yaml:"name"`
+	Image string `json:"image" yaml:"image"`
 }
 
 type Container struct {
