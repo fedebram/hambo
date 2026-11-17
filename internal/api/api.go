@@ -49,3 +49,8 @@ type Container struct {
 	NodeName  string        `json:"node_name"` // empty while pending
 	CreatedAt time.Time     `json:"created_at"`
 }
+
+type NodeContainer struct {
+	ID   string        `json:"id"`
+	Spec ContainerSpec `json:"spec"`
+}

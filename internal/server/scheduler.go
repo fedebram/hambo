@@ -78,6 +78,8 @@ func (s *Server) scheduleContainer(id string) error {
 		return fmt.Errorf("container %s changed while scheduling", id)
 	}
 	fmt.Println("container scheduled:", id, node.Name)
+	// the node gets its new list of containers
+	s.updateLater(node.PublicKey)
 	return nil
 }
 

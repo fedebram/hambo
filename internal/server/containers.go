@@ -47,7 +47,7 @@ func (s *Server) removeContainer(ctx context.Context, stream *rpc.Stream) error 
 	if err := stream.Recv(&name); err != nil {
 		return err
 	}
-	found, err := s.st.RemoveContainer(ctx, name)
+	node, found, err := s.st.RemoveContainer(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -55,5 +55,9 @@ func (s *Server) removeContainer(ctx context.Context, stream *rpc.Stream) error 
 		return rpc.Errorf("no container named %s", name)
 	}
 	fmt.Println("container removed:", name)
+	// an hard delete...
+	if node != nil {
+		s.updateLater(node)
+	}
 	return stream.Send("removed")
 }

@@ -119,7 +119,7 @@ type NodeCount struct {
 	Count     int
 }
 
-// ContainersPerNode returns every worker with its number of containers,
+// ContainersPerNode returns every node with its number of containers,
 // sorted by name.
 func (s *Store) ContainersPerNode(ctx context.Context) ([]NodeCount, error) {
 	rows, err := s.read.QueryContext(ctx,
@@ -160,16 +160,42 @@ func (s *Store) AssignContainer(ctx context.Context, id string, node []byte) (as
 	return n > 0, nil
 }
 
-// RemoveContainer deletes the container with this name.
+// ContainersAssignedTo returns the containers assigned to the node,
+// sorted by name.
+func (s *Store) ContainersAssignedTo(ctx context.Context, node []byte) ([]api.NodeContainer, error) {
+	rows, err := s.read.QueryContext(ctx,
+		"SELECT id, spec FROM containers WHERE node_key = ? ORDER BY name", node)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var containers []api.NodeContainer
+	for rows.Next() {
+		var c api.NodeContainer
+		var data []byte
+		if err := rows.Scan(&c.ID, &data); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &c.Spec); err != nil {
+			return nil, err
+		}
+		containers = append(containers, c)
+	}
+	return containers, rows.Err()
+}
+
+// RemoveContainer deletes the container with this name and returns the
+// key of its node, nil if it was pending.
 // found is false if there is no such container.
-func (s *Store) RemoveContainer(ctx context.Context, name string) (found bool, err error) {
-	res, err := s.write.ExecContext(ctx, "DELETE FROM containers WHERE name = ?", name)
-	if err != nil {
-		return false, err
+func (s *Store) RemoveContainer(ctx context.Context, name string) (node []byte, found bool, err error) {
+	err = s.write.QueryRowContext(ctx,
+		"DELETE FROM containers WHERE name = ? RETURNING node_key", name).Scan(&node)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
 	}
-	n, err := res.RowsAffected()
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
-	return n > 0, nil
+	return node, true, nil
 }

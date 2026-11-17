@@ -15,7 +15,23 @@ func (w *worker) routes() *rpc.Router {
 	r := rpc.NewRouter()
 	r.Handle("health", w.health)
 	r.Handle("wg.config", w.wgConfig)
+	r.Handle("containers.sync", w.containersSync)
 	return r
+}
+
+// containersSync receives the full list of containers that should run on
+// this node. For now it only prints it.
+func (w *worker) containersSync(ctx context.Context, stream *rpc.Stream) error {
+	var containers []api.NodeContainer
+	if err := stream.Recv(&containers); err != nil {
+		return err
+	}
+
+	fmt.Println("containers:", len(containers))
+	for _, c := range containers {
+		fmt.Println(" ", c.Spec.Name, c.ID, c.Spec.Image)
+	}
+	return stream.Send("ok")
 }
 
 func (w *worker) health(ctx context.Context, stream *rpc.Stream) error {

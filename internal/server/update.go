@@ -48,7 +48,7 @@ func (s *Server) runUpdates() {
 
 // updateNode brings one node up to date with the store: if it was
 // removed, it closes its session.
-// Otherwise it sends its WireGuard config.
+// Otherwise it sends its WireGuard config and its containers.
 func (s *Server) updateNode(key string) error {
 	pub, err := hex.DecodeString(key)
 	if err != nil {
@@ -69,7 +69,7 @@ func (s *Server) updateNode(key string) error {
 	}
 
 	// the node is not in the store? it was removed, so we close its session.
-	
+
 	var node *store.Client
 	for i := range nodes {
 		if bytes.Equal(nodes[i].PublicKey, pub) {
@@ -90,8 +90,18 @@ func (s *Server) updateNode(key string) error {
 	timer := time.AfterFunc(sendTimeout, func() { sess.Close() })
 	defer timer.Stop()
 
+	// right now is ok to couple sending wg config with containers sync
+
 	var answer string
 	if err := rpc.Call(sess, "wg.config", cfg, &answer); err != nil {
+		return fmt.Errorf("%s: %w", workerName(pub), err)
+	}
+
+	containers, err := s.st.ContainersAssignedTo(context.Background(), pub)
+	if err != nil {
+		return fmt.Errorf("%s: %w", workerName(pub), err)
+	}
+	if err := rpc.Call(sess, "containers.sync", containers, &answer); err != nil {
 		return fmt.Errorf("%s: %w", workerName(pub), err)
 	}
 	return nil
