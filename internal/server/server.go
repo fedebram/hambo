@@ -29,6 +29,9 @@ type Server struct {
 
 	queue   *queue.MemoryQueue
 	backoff *backoff.Backoff
+
+	schedQueue   *queue.MemoryQueue
+	schedBackoff *backoff.Backoff
 }
 
 // how many nodes are updated concurrently
@@ -44,6 +47,9 @@ func New(key noise.DHKey, cidr netip.Prefix, st *store.Store) *Server {
 		reg:     newRegistry(),
 		queue:   queue.NewMemoryQueue(),
 		backoff: backoff.NewBackoff(time.Second, time.Minute),
+
+		schedQueue:   queue.NewMemoryQueue(),
+		schedBackoff: backoff.NewBackoff(time.Second, time.Minute),
 	}
 	s.router = s.routes()
 	return s
@@ -57,6 +63,10 @@ func (s *Server) Serve(ln net.Listener) error {
 		go s.runUpdates()
 	}
 	defer s.queue.Shutdown()
+
+	// one scheduler!!
+	go s.runScheduler()
+	defer s.schedQueue.Shutdown()
 
 	for {
 		conn, err := ln.Accept()
@@ -117,6 +127,9 @@ func (s *Server) serveConn(conn net.Conn) {
 			// mmmmh the name is not that good....
 			s.updateLater(pub)
 		}
+
+		// the pending containers may fit on this node now
+		s.scheduleAllPending()
 	}
 
 	s.router.Serve(withCaller(ctx, caller{PubKey: pub}), sess)

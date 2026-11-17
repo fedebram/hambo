@@ -30,6 +30,7 @@ func (s *Server) runContainer(ctx context.Context, stream *rpc.Stream) error {
 		return err
 	}
 	fmt.Println("container added:", c.Spec.Name, c.ID)
+	s.scheduleLater(c.ID)
 	return stream.Send(c)
 }
 

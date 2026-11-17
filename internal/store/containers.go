@@ -83,6 +83,83 @@ func (s *Store) ListContainers(ctx context.Context) ([]api.Container, error) {
 	return containers, rows.Err()
 }
 
+// PendingContainers returns the ids of the containers without a node,
+// the oldest first.
+func (s *Store) PendingContainers(ctx context.Context) ([]string, error) {
+	rows, err := s.read.QueryContext(ctx,
+		"SELECT id FROM containers WHERE node_key IS NULL ORDER BY created_at")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// IsPending reports whether the container exists and has no node yet.
+func (s *Store) IsPending(ctx context.Context, id string) (bool, error) {
+	var pending bool
+	err := s.read.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM containers WHERE id = ? AND node_key IS NULL)", id).Scan(&pending)
+	return pending, err
+}
+
+// NodeCount is a worker and how many containers it has.
+type NodeCount struct {
+	PublicKey []byte
+	Name      string
+	Count     int
+}
+
+// ContainersPerNode returns every worker with its number of containers,
+// sorted by name.
+func (s *Store) ContainersPerNode(ctx context.Context) ([]NodeCount, error) {
+	rows, err := s.read.QueryContext(ctx,
+		`SELECT public_key, name,
+			(SELECT COUNT(*) FROM containers WHERE node_key = clients.public_key)
+		FROM clients
+		WHERE role = ?
+		ORDER BY name`, RoleWorker)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var counts []NodeCount
+	for rows.Next() {
+		var n NodeCount
+		if err := rows.Scan(&n.PublicKey, &n.Name, &n.Count); err != nil {
+			return nil, err
+		}
+		counts = append(counts, n)
+	}
+	return counts, rows.Err()
+}
+
+// AssignContainer puts the container on the node, only if it is still
+// pending. assigned is false if it was removed or already has a node.
+func (s *Store) AssignContainer(ctx context.Context, id string, node []byte) (assigned bool, err error) {
+	res, err := s.write.ExecContext(ctx,
+		"UPDATE containers SET node_key = ? WHERE id = ? AND node_key IS NULL",
+		node, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // RemoveContainer deletes the container with this name.
 // found is false if there is no such container.
 func (s *Store) RemoveContainer(ctx context.Context, name string) (found bool, err error) {
