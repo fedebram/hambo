@@ -28,6 +28,9 @@ func (s *Server) routes() *rpc.Router {
 	r.Handle("join", newcomer(s.join))
 	r.Handle("nodes.list", admin(s.listNodes))
 	r.Handle("nodes.remove", admin(s.removeNode))
+	r.Handle("containers.run", admin(s.runContainer))
+	r.Handle("containers.list", admin(s.listContainers))
+	r.Handle("containers.remove", admin(s.removeContainer))
 	return r
 }
 

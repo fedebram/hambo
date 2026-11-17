@@ -15,3 +15,10 @@ CREATE TABLE IF NOT EXISTS tokens (
 	secret     BLOB NOT NULL,
 	expires_at INTEGER NOT NULL
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS containers (
+	id         TEXT PRIMARY KEY,
+	name       TEXT NOT NULL UNIQUE,
+	spec       BLOB NOT NULL,
+	created_at INTEGER NOT NULL
+) STRICT;

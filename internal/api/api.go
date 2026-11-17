@@ -37,3 +37,14 @@ type WGPeer struct {
 	Endpoint  netip.AddrPort `json:"endpoint"`   // where its wg0 listens, like 192.168.1.20:51820
 	Subnet    netip.Prefix   `json:"subnet"`     // its subnet, like 10.100.2.0/24
 }
+
+type ContainerSpec struct {
+	Name  string `json:"name"`
+	Image string `json:"image"`
+}
+
+type Container struct {
+	ID        string        `json:"id"`
+	Spec      ContainerSpec `json:"spec"`
+	CreatedAt time.Time     `json:"created_at"`
+}
