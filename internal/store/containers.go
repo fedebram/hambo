@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -51,7 +52,12 @@ func (s *Store) AddContainer(ctx context.Context, spec api.ContainerSpec) (api.C
 
 // ListContainers returns the containers, sorted by name.
 func (s *Store) ListContainers(ctx context.Context) ([]api.Container, error) {
-	rows, err := s.read.QueryContext(ctx, "SELECT id, spec, created_at FROM containers ORDER BY name")
+	// LEFT JOIN: the pending containers have no node, but we still want them
+	rows, err := s.read.QueryContext(ctx,
+		`SELECT ct.id, ct.spec, ct.created_at, cl.name
+		FROM containers ct
+		LEFT JOIN clients cl ON cl.public_key = ct.node_key
+		ORDER BY ct.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -62,13 +68,16 @@ func (s *Store) ListContainers(ctx context.Context) ([]api.Container, error) {
 		var c api.Container
 		var data []byte
 		var created int64
-		if err := rows.Scan(&c.ID, &data, &created); err != nil {
+		// NULL while the container is pending
+		var nodeName sql.NullString
+		if err := rows.Scan(&c.ID, &data, &created, &nodeName); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(data, &c.Spec); err != nil {
 			return nil, err
 		}
 		c.CreatedAt = time.Unix(created, 0)
+		c.NodeName = nodeName.String
 		containers = append(containers, c)
 	}
 	return containers, rows.Err()

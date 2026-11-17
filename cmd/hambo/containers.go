@@ -94,9 +94,13 @@ func runContainersList(configPath string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "NAME\tID\tIMAGE\tAGE")
+	fmt.Fprintln(w, "NAME\tID\tSTATUS\tNODE\tIMAGE\tAGE")
 	for _, c := range containers {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", c.Spec.Name, c.ID, c.Spec.Image, age(c.CreatedAt))
+		status, node := "pending", "<none>"
+		if c.NodeName != "" {
+			status, node = "scheduled", c.NodeName
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", c.Spec.Name, c.ID, status, node, c.Spec.Image, age(c.CreatedAt))
 	}
 	return w.Flush()
 }
